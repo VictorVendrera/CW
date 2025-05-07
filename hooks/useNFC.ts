@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Platform } from 'react-native';
-import NfcReaderService from '../app/services/NfcReader';
+import { Platform, EmitterSubscription } from 'react-native';
+import NfcService from '../src/services/NfcService';
 
 export type PaymentDetailsType = {
   id: string;
@@ -18,9 +18,20 @@ export type CardDataType = {
   cardNumber: string;
   expiryDate: string;
   cardType?: string;
+  cardholderName?: string;
+  issuerCountryCode?: string;
   isTagId: boolean;
   status: 'success' | 'error';
   error?: string;
+};
+
+type NFCEventType = {
+  status?: string;
+  message?: string;
+  pan?: string;
+  expiryDate?: string;
+  cardholderName?: string;
+  issuerCountryCode?: string;
 };
 
 const useNFC = () => {
@@ -38,11 +49,11 @@ const useNFC = () => {
 
     const checkAvailability = async () => {
       try {
-        const available = await NfcReaderService.isSupported();
+        const available = await NfcService.isSupported();
         setIsAvailable(available);
         
         if (available) {
-          const enabled = await NfcReaderService.isEnabled();
+          const enabled = await NfcService.isEnabled();
           setIsEnabled(enabled);
         }
       } catch (err) {
@@ -55,27 +66,32 @@ const useNFC = () => {
     checkAvailability();
 
     // Configurar listeners para eventos NFC
-    const nfcDetectionSubscription = NfcReaderService.addListener('nfcCardDetected', (event) => {
+    const nfcDetectionSubscription = NfcService.addListener('nfcTagDiscovered', (event: NFCEventType) => {
       console.log('Cartão detectado:', event);
       setStatus('processing');
     });
     
-    const nfcSuccessSubscription = NfcReaderService.addListener('nfcReadingSuccess', (event) => {
+    const nfcSuccessSubscription = NfcService.addListener('nfcCardData', (event: NFCEventType) => {
       console.log('Leitura bem-sucedida:', event);
+      const formattedData = NfcService.formatCardData(event);
+      if (formattedData) {
+        setCardData(formattedData as CardDataType);
+        setStatus('success');
+      }
     });
     
-    const nfcErrorSubscription = NfcReaderService.addListener('nfcReadingError', (event) => {
+    const nfcErrorSubscription = NfcService.addListener('nfcError', (event: NFCEventType) => {
       console.log('Erro na leitura:', event);
       setStatus('error');
-      setError(event.error || 'Erro ao ler o cartão');
+      setError(event.message || 'Erro ao ler o cartão');
     });
     
-    const nfcStartedSubscription = NfcReaderService.addListener('nfcReadingStarted', (event) => {
+    const nfcStartedSubscription = NfcService.addListener('nfcReadingStarted', (event: NFCEventType) => {
       console.log('Leitura iniciada:', event);
       setStatus('waiting');
     });
     
-    const nfcStoppedSubscription = NfcReaderService.addListener('nfcReadingStopped', (event) => {
+    const nfcStoppedSubscription = NfcService.addListener('nfcReadingStopped', (event: NFCEventType) => {
       console.log('Leitura interrompida:', event);
       if (status !== 'success' && status !== 'error') {
         setStatus('cancelled');
@@ -84,15 +100,15 @@ const useNFC = () => {
 
     return () => {
       // Limpar todos os listeners
-      nfcDetectionSubscription();
-      nfcSuccessSubscription();
-      nfcErrorSubscription();
-      nfcStartedSubscription();
-      nfcStoppedSubscription();
+      nfcDetectionSubscription.remove();
+      nfcSuccessSubscription.remove();
+      nfcErrorSubscription.remove();
+      nfcStartedSubscription.remove();
+      nfcStoppedSubscription.remove();
       
       // Certificar-se de parar a leitura ao desmontar
       if (status === 'reading' || status === 'processing' || status === 'waiting') {
-        NfcReaderService.stopCardReading();
+        NfcService.stopCardReading();
       }
     };
   }, [status]);
@@ -114,19 +130,21 @@ const useNFC = () => {
       setCardData(null);
       
       // Iniciar leitura do cartão NFC
-      const result = await NfcReaderService.startCardReading();
+      const result = await NfcService.startCardReading();
       
-      if (result && result.status === 'success' && result.cardNumber) {
-        setCardData(result);
-        setStatus('success');
-        return {
-          success: true,
-          cardData: result,
-          paymentDetails
-        };
-      } else {
-        throw new Error(result?.error || 'Erro na leitura do cartão');
+      if (result) {
+        const formattedData = NfcService.formatCardData(result);
+        if (formattedData) {
+          setCardData(formattedData as CardDataType);
+          setStatus('success');
+          return {
+            success: true,
+            cardData: formattedData as CardDataType,
+            paymentDetails
+          };
+        }
       }
+      throw new Error('Erro na leitura do cartão');
     } catch (err: any) {
       console.error('Erro ao iniciar pagamento NFC:', err);
       setError(err.message || 'Erro ao iniciar pagamento NFC');
@@ -140,7 +158,7 @@ const useNFC = () => {
 
   const cancelNfcPayment = async () => {
     try {
-      await NfcReaderService.stopCardReading();
+      await NfcService.stopCardReading();
       setStatus('cancelled');
       return true;
     } catch (err: any) {

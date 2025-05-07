@@ -172,8 +172,13 @@ NFC PayFlow - Pagamento seguro e sem contato
   
   // Formatar número do cartão para exibição
   const displayCardNumber = paymentData.cardNumber 
-    ? `**** **** **** ${paymentData.cardNumber.slice(-4)}` 
+    ? paymentData.cardNumber
     : '**** **** **** ****';
+  
+  // Formatar data de validade para exibição
+  const displayExpiryDate = paymentData.expiryDate
+    ? paymentData.expiryDate
+    : 'MM/AA';
   
   return (
     <SafeAreaView style={styles.container}>
@@ -229,7 +234,7 @@ NFC PayFlow - Pagamento seguro e sem contato
           <View style={styles.receiptItem}>
             <Text style={styles.receiptLabel}>Validade</Text>
             <Text style={styles.receiptValue}>
-              {paymentData.expiryDate || 'MM/AA'}
+              {displayExpiryDate}
             </Text>
           </View>
           
