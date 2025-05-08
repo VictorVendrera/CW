@@ -22,7 +22,7 @@ import MoneyText from '../../components/MoneyText';
 import Section from '../../components/Section';
 import OptionSelector from '../../components/OptionSelector';
 import Checkbox from '../../components/Checkbox';
-import NfcReaderService from '../services/NfcReader';
+import { useNFC } from '../../hooks/useNFC';
 
 type ChargeData = {
   id: string;
@@ -34,89 +34,37 @@ type ChargeData = {
   date: string;
 };
 
-type NFCStatus = 'waiting' | 'reading' | 'processing' | 'success' | 'error';
-type CardData = {
-  cardNumber: string;
-  expiryDate: string;
-  cardType?: string;
-  isTagId: boolean;
-  status: 'success' | 'error';
-  error?: string;
-};
-
 const NFCPaymentScreen = () => {
   const router = useRouter();
   const params = useLocalSearchParams();
-  const appState = useRef<AppStateStatus>(AppState.currentState);
   
+  // Estados locais da tela
   const [charge, setCharge] = useState<ChargeData | null>(null);
-  const [nfcStatus, setNfcStatus] = useState<NFCStatus>('waiting');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [installments, setInstallments] = useState<number>(1);
   const [paymentType, setPaymentType] = useState<'credit' | 'debit'>('credit');
   const [chargeCardFee, setChargeCardFee] = useState<boolean>(false);
-  const [cardData, setCardData] = useState<CardData | null>(null);
+  
+  // Utilizar o hook useNFC para gerenciar a leitura NFC
+  const { 
+    status, 
+    error: nfcError, 
+    cardData, 
+    startCardReading,
+    stopCardReading,
+    resetNfcState
+  } = useNFC();
 
-  // Gerenciar eventos NFC
+  // Cleanup ao desmontar o componente
   useEffect(() => {
-    const nfcDetectionSubscription = NfcReaderService.addListener('nfcCardDetected', (event) => {
-      console.log('Cartão detectado:', event);
-      setNfcStatus('processing');
-    });
-    
-    const nfcSuccessSubscription = NfcReaderService.addListener('nfcReadingSuccess', (event) => {
-      console.log('Leitura bem-sucedida:', event);
-    });
-    
-    const nfcErrorSubscription = NfcReaderService.addListener('nfcReadingError', (event) => {
-      console.log('Erro na leitura:', event);
-      setNfcStatus('error');
-      setErrorMessage(event.error || 'Erro ao ler o cartão');
-    });
-    
-    const nfcStartedSubscription = NfcReaderService.addListener('nfcReadingStarted', (event) => {
-      console.log('Leitura iniciada:', event);
-    });
-    
-    const nfcStoppedSubscription = NfcReaderService.addListener('nfcReadingStopped', (event) => {
-      console.log('Leitura interrompida:', event);
-    });
-    
-    // Monitorar mudanças no estado do app para gerenciar o ciclo de vida do NFC
-    const appStateSubscription = AppState.addEventListener('change', nextAppState => {
-      if (appState.current.match(/inactive|background/) && nextAppState === 'active') {
-        // App voltou para o primeiro plano
-        console.log('App retornou ao primeiro plano');
-      } else if (nextAppState.match(/inactive|background/) && appState.current === 'active') {
-        // App foi para background
-        console.log('App foi para background');
-        if (nfcStatus === 'reading') {
-          NfcReaderService.stopCardReading();
-          setNfcStatus('waiting');
-        }
-      }
-      
-      appState.current = nextAppState;
-    });
-    
     return () => {
-      // Limpar todos os listeners
-      nfcDetectionSubscription();
-      nfcSuccessSubscription();
-      nfcErrorSubscription();
-      nfcStartedSubscription();
-      nfcStoppedSubscription();
-      appStateSubscription.remove();
-      
-      // Certificar-se de parar a leitura ao desmontar
-      if (nfcStatus === 'reading' || nfcStatus === 'processing') {
-        NfcReaderService.stopCardReading();
-      }
+      // Cancelar leitura NFC quando o componente for desmontado
+      stopCardReading();
     };
-  }, [nfcStatus]);
+  }, [stopCardReading]);
 
+  // Processar dados da cobrança dos parâmetros
   useEffect(() => {
-    // Processar dados da cobrança dos parâmetros
     if (params.chargeData) {
       try {
         const parsedData = JSON.parse(params.chargeData as string) as ChargeData;
@@ -131,12 +79,19 @@ const NFCPaymentScreen = () => {
     }
   }, [params.chargeData, router]);
 
+  // Sincronizar erro do NFC para a tela
+  useEffect(() => {
+    if (nfcError) {
+      setErrorMessage(nfcError);
+    }
+  }, [nfcError]);
+
   // Impedir voltar com hardware back quando estiver processando
   useEffect(() => {
     const backHandler = BackHandler.addEventListener(
       'hardwareBackPress',
       () => {
-        if (nfcStatus === 'processing' || nfcStatus === 'reading') {
+        if (status === 'reading' || status === 'detected') {
           return true; // Impedir navegação para trás
         }
         return false; // Permitir comportamento padrão
@@ -144,50 +99,92 @@ const NFCPaymentScreen = () => {
     );
 
     return () => backHandler.remove();
-  }, [nfcStatus]);
+  }, [status]);
 
-  const startCardReading = async () => {
-    setNfcStatus('reading');
-    setErrorMessage(null);
-    
-    try {
-      const result = await NfcReaderService.startCardReading();
-      console.log('Resultado da leitura do cartão:', result);
+  // Efeito para navegar para a tela de sucesso quando o status for 'success'
+  useEffect(() => {
+    if (status === 'success' && cardData) {
+      console.log('NFC: Navegando para tela de sucesso com dados:', cardData);
       
-      if (result && result.cardNumber) {
-        setCardData(result);
-        setNfcStatus('success');
+      try {
+        // Preparar dados para navegação
+        const navigationData = {
+          cardNumber: cardData.cardNumber,
+          expiryDate: cardData.expiryDate,
+          cardType: cardData.cardType || 'Desconhecido',
+          chargeData: charge,
+          amount: calculateTotal(),
+          installments,
+          paymentType,
+          timestamp: Date.now()
+        };
         
-        // Dar um tempo para a animação de sucesso antes de ir para a próxima tela
-        setTimeout(() => {
-          const successData = {
-            cardNumber: result.cardNumber,
-            expiryDate: result.expiryDate,
-            cardType: result.cardType || 'Desconhecido',
-            chargeData: charge,
-            amount: calculateTotal(),
-            installments: installments,
-            paymentType: paymentType
-          };
+        console.log('NFC: Dados preparados para navegação:', navigationData);
+        
+        // Forçar navegação imediata para a tela de sucesso com múltiplas tentativas
+        const navigateToSuccess = () => {
+          console.log('NFC: Tentando navegar para tela de sucesso...');
           
-          router.push({
-            pathname: '/payment/success',
-            params: { paymentData: JSON.stringify(successData) }
-          });
-        }, 1500);
-      } else {
-        setNfcStatus('error');
-        setErrorMessage('Não foi possível ler os dados do cartão');
+          try {
+            router.replace({
+              pathname: '/payment/success',
+              params: { 
+                paymentData: JSON.stringify(navigationData),
+                refreshKey: Date.now().toString()
+              }
+            });
+          } catch (navError) {
+            console.error('NFC: Erro ao navegar:', navError);
+          }
+        };
+        
+        // Primeira tentativa imediata
+        navigateToSuccess();
+        
+        // Segunda tentativa após um pequeno atraso (caso a primeira falhe)
+        setTimeout(navigateToSuccess, 500);
+        
+        // Terceira tentativa após um atraso maior (caso as anteriores falhem)
+        setTimeout(navigateToSuccess, 1500);
+        
+      } catch (error) {
+        console.error('NFC: Erro ao navegar para tela de sucesso:', error);
+        setErrorMessage('Erro ao processar pagamento');
       }
+    }
+  }, [status, cardData, charge, installments, paymentType, router]);
+
+  // Adicionar listener para mudanças no estado do app
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
+      if (nextAppState === 'active' && status === 'success' && cardData) {
+        console.log('NFC: App voltou ao primeiro plano com leitura bem-sucedida');
+        // Forçar recálculo do efeito de navegação
+        router.setParams({ 
+          refresh: Date.now().toString(),
+          forceNavigation: 'true'
+        });
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [status, cardData, router]);
+
+  const startPayment = async () => {
+    setErrorMessage(null);
+    try {
+      console.log('Iniciando leitura do cartão...');
+      await startCardReading();
     } catch (error: any) {
-      console.error('Erro ao ler cartão:', error);
-      setNfcStatus('error');
-      setErrorMessage(error.error || 'Erro ao ler o cartão');
+      console.error('Erro ao iniciar leitura do cartão:', error);
+      setErrorMessage(error.message || 'Erro ao iniciar leitura do cartão');
     }
   };
 
   const cancelTransaction = () => {
-    if (nfcStatus === 'reading' || nfcStatus === 'processing') {
+    if (status === 'reading' || status === 'detected') {
       Alert.alert(
         'Cancelar Transação',
         'Tem certeza que deseja cancelar esta transação?',
@@ -197,8 +194,7 @@ const NFCPaymentScreen = () => {
             text: 'Sim', 
             style: 'destructive', 
             onPress: () => {
-              NfcReaderService.stopCardReading();
-              setNfcStatus('waiting');
+              stopCardReading();
               setErrorMessage(null);
             }
           },
@@ -248,8 +244,10 @@ const NFCPaymentScreen = () => {
   }
 
   const renderContent = () => {
-    switch (nfcStatus) {
+    switch (status) {
+      case 'idle':
       case 'waiting':
+      case 'cancelled':
         return (
           <ScrollView style={styles.scrollContent}>
             <Card variant="elevated" style={styles.chargeCard}>
@@ -338,16 +336,16 @@ const NFCPaymentScreen = () => {
         );
       
       case 'reading':
-      case 'processing':
+      case 'detected':
         return (
           <View style={styles.processingContainer}>
             <View style={styles.nfcContainer}>
               <CreditCard size={60} color={theme.colors.primary} />
               <Text style={styles.nfcText}>
-                {nfcStatus === 'reading' ? 'Aproxime o cartão' : 'Processando pagamento'}
+                {status === 'reading' ? 'Aproxime o cartão' : 'Processando pagamento'}
               </Text>
               <Text style={styles.nfcSubtext}>
-                {nfcStatus === 'reading' 
+                {status === 'reading' 
                   ? 'Mantenha o cartão próximo ao dispositivo' 
                   : 'Aguarde enquanto processamos seu pagamento'}
               </Text>
@@ -445,12 +443,14 @@ const NFCPaymentScreen = () => {
   };
 
   const renderFooter = () => {
-    switch (nfcStatus) {
+    switch (status) {
+      case 'idle':
       case 'waiting':
+      case 'cancelled':
         return (
           <Button
             title="Realizar pagamento"
-            onPress={startCardReading}
+            onPress={startPayment}
             variant="primary"
             size="lg"
             fullWidth
@@ -460,7 +460,7 @@ const NFCPaymentScreen = () => {
         );
       
       case 'reading':
-      case 'processing':
+      case 'detected':
         return (
           <Button
             title="Cancelar"
@@ -502,7 +502,7 @@ const NFCPaymentScreen = () => {
           <View style={styles.footerButtonsContainer}>
             <Button
               title="Tentar novamente"
-              onPress={startCardReading}
+              onPress={startPayment}
               variant="primary"
               size="lg"
               style={styles.footerButton}
@@ -525,16 +525,16 @@ const NFCPaymentScreen = () => {
       <TouchableOpacity
           onPress={cancelTransaction} 
           style={styles.backButton}
-          disabled={nfcStatus === 'processing'}
+          disabled={status === 'reading' || status === 'detected'}
         >
           <ArrowLeft size={24} color={theme.colors.text} />
       </TouchableOpacity>
         <Text style={styles.headerTitle}>
-          {nfcStatus === 'waiting' 
+          {status === 'waiting' || status === 'idle' || status === 'cancelled'
             ? 'Pagamento com Cartão' 
-            : nfcStatus === 'success'
+            : status === 'success'
             ? 'Pagamento Concluído'
-            : nfcStatus === 'error'
+            : status === 'error'
             ? 'Pagamento Recusado'
             : 'Processando Pagamento'}
         </Text>

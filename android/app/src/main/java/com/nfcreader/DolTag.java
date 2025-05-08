@@ -35,4 +35,4 @@ public class DolTag {
     public void setDefaultValue(byte[] defaultValue) {
         this.defaultValue = defaultValue;
     }
-} 
+}

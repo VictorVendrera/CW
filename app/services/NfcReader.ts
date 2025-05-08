@@ -1,224 +1,166 @@
 import { NativeModules, NativeEventEmitter, Platform } from 'react-native';
 
-// Acesso ao módulo nativo Java (NfcReaderModule.java)
-const { NfcReader } = NativeModules;
-
-// Verificação de carregamento do módulo nativo para ajudar no debug
-if (!NfcReader) {
-  console.error('Módulo NfcReader não encontrado! Verifique se NfcReaderModule.java está configurado corretamente.');
+// Interface para o módulo nativo
+interface NativeNfcReader {
+  isSupported(): Promise<boolean>;
+  isEnabled(): Promise<boolean>;
+  startCardReading(): Promise<any>;
+  stopCardReading(): void;
 }
 
-// Cria um emissor de eventos nativo para receber eventos do NfcReaderModule.java
-const nfcEventEmitter = new NativeEventEmitter(NfcReader);
+// Interface para eventos do cartão
+interface CardDetectedEvent {
+  status: string;
+}
 
-// Definição de tipos de retorno - deve corresponder exatamente à estrutura retornada pelo Java
-interface CardData {
-  status: 'success' | 'error';
+interface CardReadEvent {
   cardNumber: string;
+  cardType: string;
   expiryDate: string;
-  cardType?: string;
-  isTagId: boolean;  // Indica se estamos usando o ID da tag em vez do PAN real
-  error?: string;
+  isReady: boolean;
+  isTagId: boolean;
 }
 
-// Códigos de erro que podem ser retornados pelo módulo Java
-enum NfcErrorCode {
-  NO_ACTIVITY = 'NO_ACTIVITY',
-  NO_NFC = 'NO_NFC',
-  NFC_DISABLED = 'NFC_DISABLED',
-  ALREADY_READING = 'ALREADY_READING',
-  NFC_CARD_ERROR = 'NFC_CARD_ERROR',
-  CARD_DATA_ERROR = 'CARD_DATA_ERROR',
-  COMMUNICATION_ERROR = 'COMMUNICATION_ERROR',
-  START_FAILED = 'START_FAILED',
-  SDK_TOO_OLD = 'SDK_TOO_OLD'
+interface ErrorEvent {
+  status: string;
+  error: string;
 }
 
-// Serviço para interagir com o leitor NFC
-const NfcReaderService = {
+// Obtenha a referência ao módulo nativo
+const NativeNfcReader = NativeModules.NfcReader as NativeNfcReader;
+const eventEmitter = new NativeEventEmitter(NativeModules.NfcReader);
+
+// Classe do serviço NFC
+class NfcReaderService {
   /**
-   * Verifica se o dispositivo suporta NFC
-   * Chama o método isSupported() do NfcReaderModule.java
+   * Verifica se o dispositivo possui suporte a NFC
    */
-  isSupported: async (): Promise<boolean> => {
+  async isSupported(): Promise<boolean> {
     try {
-      console.log('[NfcReaderService] Verificando suporte a NFC...');
-      return await NfcReader.isSupported();
+      return await NativeNfcReader.isSupported();
     } catch (error) {
-      console.error('[NfcReaderService] Erro ao verificar suporte NFC:', error);
+      console.error('[NfcReader] Erro ao verificar suporte NFC:', error);
       return false;
     }
-  },
+  }
 
   /**
-   * Verifica se o NFC está ativado no dispositivo
-   * Chama o método isEnabled() do NfcReaderModule.java
+   * Verifica se o NFC está habilitado no dispositivo
    */
-  isEnabled: async (): Promise<boolean> => {
+  async isEnabled(): Promise<boolean> {
     try {
-      console.log('[NfcReaderService] Verificando se NFC está ativado...');
-      return await NfcReader.isEnabled();
+      return await NativeNfcReader.isEnabled();
     } catch (error) {
-      console.error('[NfcReaderService] Erro ao verificar se NFC está ativado:', error);
+      console.error('[NfcReader] Erro ao verificar se NFC está habilitado:', error);
       return false;
     }
-  },
+  }
 
   /**
-   * Inicia a leitura do cartão NFC
-   * Chama o método startCardReading() do NfcReaderModule.java
+   * Inicia o processo de leitura do cartão NFC
    */
-  startCardReading: async (): Promise<CardData> => {
-    return new Promise((resolve, reject) => {
-      try {
-        console.log('[NfcReaderService] Iniciando leitura do cartão NFC');
-        
-        // Remover ouvintes anteriores para evitar duplicação
-        nfcEventEmitter.removeAllListeners('nfcCardDetected');
-        nfcEventEmitter.removeAllListeners('nfcReadingSuccess');
-        nfcEventEmitter.removeAllListeners('nfcReadingError');
-        nfcEventEmitter.removeAllListeners('nfcCardProcessing');
-        nfcEventEmitter.removeAllListeners('nfcReadingStarted');
-        nfcEventEmitter.removeAllListeners('nfcReadingStopped');
-        
-        // Ouvir evento de detecção do cartão
-        nfcEventEmitter.addListener('nfcCardDetected', (event) => {
-          console.log('[NfcReaderService] Cartão NFC detectado:', event);
-        });
-        
-        // Ouvir evento de processamento
-        nfcEventEmitter.addListener('nfcCardProcessing', (event) => {
-          console.log('[NfcReaderService] Processando cartão NFC:', event);
-        });
-        
-        // Ouvir evento de início de leitura
-        nfcEventEmitter.addListener('nfcReadingStarted', (event) => {
-          console.log('[NfcReaderService] Leitura NFC iniciada:', event);
-        });
-        
-        // Ouvir evento de fim de leitura
-        nfcEventEmitter.addListener('nfcReadingStopped', (event) => {
-          console.log('[NfcReaderService] Leitura NFC interrompida:', event);
-        });
-        
-        // Ouvir evento de sucesso
-        nfcEventEmitter.addListener('nfcReadingSuccess', (event) => {
-          console.log('[NfcReaderService] Leitura do cartão com sucesso:', event);
-          // Não resolver aqui, deixar a promise nativa resolver
-        });
-        
-        // Ouvir evento de erro
-        nfcEventEmitter.addListener('nfcReadingError', (event) => {
-          console.log('[NfcReaderService] Erro na leitura do cartão:', event);
-          // Não rejeitar aqui, deixar a promise nativa rejeitar
-        });
-        
-        // Iniciar a leitura NFC e esperar o resultado
-        NfcReader.startCardReading()
-          .then((result: CardData) => {
-            console.log('[NfcReaderService] Resultado da leitura:', result);
-            
-            // Remover todos os listeners após o resultado
-            nfcEventEmitter.removeAllListeners('nfcCardDetected');
-            nfcEventEmitter.removeAllListeners('nfcReadingSuccess');
-            nfcEventEmitter.removeAllListeners('nfcReadingError');
-            nfcEventEmitter.removeAllListeners('nfcCardProcessing');
-            nfcEventEmitter.removeAllListeners('nfcReadingStarted');
-            nfcEventEmitter.removeAllListeners('nfcReadingStopped');
-            
-            resolve(result);
-          })
-          .catch((error: any) => {
-            console.error('[NfcReaderService] Erro na promise de leitura do cartão:', error);
-            
-            // Formatar o erro em um formato consistente
-            const errorData: CardData = {
-              status: 'error',
-              cardNumber: '',
-              expiryDate: '',
-              isTagId: false,
-              error: error.message || 'Erro desconhecido na leitura NFC'
-            };
-            
-            // Remover todos os listeners após o erro
-            nfcEventEmitter.removeAllListeners('nfcCardDetected');
-            nfcEventEmitter.removeAllListeners('nfcReadingSuccess');
-            nfcEventEmitter.removeAllListeners('nfcReadingError');
-            nfcEventEmitter.removeAllListeners('nfcCardProcessing');
-            nfcEventEmitter.removeAllListeners('nfcReadingStarted');
-            nfcEventEmitter.removeAllListeners('nfcReadingStopped');
-            
-            // Mapear códigos de erro conhecidos para mensagens amigáveis
-            if (error.code) {
-              switch (error.code) {
-                case NfcErrorCode.NO_NFC:
-                  errorData.error = 'Este dispositivo não suporta NFC';
-                  break;
-                case NfcErrorCode.NFC_DISABLED:
-                  errorData.error = 'NFC está desativado nas configurações';
-                  break;
-                case NfcErrorCode.NFC_CARD_ERROR:
-                  errorData.error = 'Erro ao ler o cartão. Tente novamente';
-                  break;
-                case NfcErrorCode.CARD_DATA_ERROR:
-                  errorData.error = 'Não foi possível extrair dados do cartão';
-                  break;
-                case NfcErrorCode.COMMUNICATION_ERROR:
-                  errorData.error = 'Erro de comunicação com o cartão';
-                  break;
-              }
-            }
-            
-            reject(errorData);
-          });
-      } catch (error) {
-        console.error('[NfcReaderService] Erro ao iniciar leitura do cartão:', error);
-        reject({
-          status: 'error',
-          cardNumber: '',
-          expiryDate: '',
-          isTagId: false,
-          error: 'Falha ao iniciar leitura do cartão'
-        });
-      }
-    });
-  },
-
-  /**
-   * Interrompe a leitura do cartão NFC
-   * Chama o método stopCardReading() do NfcReaderModule.java
-   */
-  stopCardReading: (): void => {
+  async startScan(): Promise<any> {
     try {
-      console.log('[NfcReaderService] Interrompendo leitura NFC');
-      NfcReader.stopCardReading();
+      console.log('[NfcReader] Iniciando startScan() - versão depuração');
+      console.log('[NfcReader] Configurando listeners de eventos');
+      console.log('[NfcReader] Chamando método nativo startCardReading()');
       
-      // Remover todos os listeners quando parar a leitura
-      nfcEventEmitter.removeAllListeners('nfcCardDetected');
-      nfcEventEmitter.removeAllListeners('nfcReadingSuccess');
-      nfcEventEmitter.removeAllListeners('nfcReadingError');
-      nfcEventEmitter.removeAllListeners('nfcCardProcessing');
-      nfcEventEmitter.removeAllListeners('nfcReadingStarted');
-      nfcEventEmitter.removeAllListeners('nfcReadingStopped');
+      return await NativeNfcReader.startCardReading();
     } catch (error) {
-      console.error('[NfcReaderService] Erro ao interromper leitura:', error);
+      console.error('[NfcReader] Erro ao iniciar leitura do cartão:', error);
+      throw error;
     }
-  },
+  }
+
+  /**
+   * Para o processo de leitura do cartão NFC
+   */
+  stopScan(): void {
+    try {
+      console.log('[NfcReader] Parando leitura do cartão');
+      NativeNfcReader.stopCardReading();
+    } catch (error) {
+      console.error('[NfcReader] Erro ao parar leitura do cartão:', error);
+    }
+  }
+
+  /**
+   * Adiciona listener para evento de detecção de cartão
+   */
+  addCardDetectedListener(callback: (event: CardDetectedEvent) => void) {
+    console.log('[NfcReader] Adicionando listener para nfcCardDetected');
+    const subscription = eventEmitter.addListener('nfcCardDetected', (event) => {
+      console.log('[NfcReader] Cartão NFC detectado:', event);
+      callback(event);
+    });
+    return subscription;
+  }
+
+  /**
+   * Adiciona listener para evento de leitura bem-sucedida do cartão
+   */
+  addCardReadListener(callback: (event: CardReadEvent) => void) {
+    console.log('[NfcReader] Adicionando listener para onCardRead');
+    const subscription = eventEmitter.addListener('onCardRead', (event) => {
+      console.log('[NfcReader] Dados do cartão recebidos:', event);
+      callback(event);
+    });
+    return subscription;
+  }
+
+  /**
+   * Adiciona listener para erros na leitura do cartão
+   */
+  addErrorListener(callback: (event: ErrorEvent) => void) {
+    console.log('[NfcReader] Adicionando listener para nfcReadingError');
+    const subscription = eventEmitter.addListener('nfcReadingError', (event) => {
+      console.log('[NfcReader] Erro na leitura NFC:', event);
+      callback(event);
+    });
+    return subscription;
+  }
+
+  /**
+   * Adiciona listener para evento de início da leitura NFC
+   */
+  addReadingStartedListener(callback: (event: any) => void) {
+    console.log('[NfcReader] Adicionando listener para nfcReadingStarted');
+    const subscription = eventEmitter.addListener('nfcReadingStarted', (event) => {
+      console.log('[NfcReader] Leitura NFC iniciada:', event);
+      callback(event);
+    });
+    return subscription;
+  }
+
+  /**
+   * Adiciona listener para evento de interrupção da leitura NFC
+   */
+  addReadingStoppedListener(callback: (event: any) => void) {
+    console.log('[NfcReader] Adicionando listener para nfcReadingStopped');
+    const subscription = eventEmitter.addListener('nfcReadingStopped', (event) => {
+      console.log('[NfcReader] Evento nfcReadingStopped recebido:', event);
+      console.log('[NfcReader] Limpando listeners');
+      callback(event);
+    });
+    return subscription;
+  }
   
   /**
-   * Assina eventos NFC. Útil para mostrar informações do processo na UI.
-   * Conecta-se aos eventos emitidos pelo NfcReaderModule.java
-   * @param event Nome do evento (nfcCardDetected, nfcReadingSuccess, etc.)
-   * @param callback Função de callback para tratar o evento
-   * @returns Função para remover o listener
+   * Remove todos os listeners de eventos
    */
-  addListener: (event: string, callback: (data: any) => void) => {
-    const subscription = nfcEventEmitter.addListener(event, callback);
-    return () => subscription.remove();
-  },
-  
-  // Expõe códigos de erro para uso externo
-  errorCodes: NfcErrorCode
-};
+  removeAllListeners() {
+    console.log('[NfcReader] Removendo todos os listeners');
+    
+    eventEmitter.removeAllListeners('nfcCardDetected');
+    eventEmitter.removeAllListeners('onCardRead');
+    eventEmitter.removeAllListeners('nfcReadingError');
+    eventEmitter.removeAllListeners('nfcReadingStarted');
+    eventEmitter.removeAllListeners('nfcReadingStopped');
+  }
+}
 
-export default NfcReaderService; 
+// Exporta uma instância da classe
+export const NfcReader = new NfcReaderService();
+
+// Adiciona export default para compatibilidade
+export default NfcReader;

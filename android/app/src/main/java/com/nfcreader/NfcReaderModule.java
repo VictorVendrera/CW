@@ -640,6 +640,17 @@ public class NfcReaderModule extends ReactContextBaseJavaModule implements NfcAd
                 
                 printStepHeader(99, "nossa jornada termina");
                 writeToLog("99 leitura do cartão concluída");
+                
+                // MODIFICAÇÃO IMPORTANTE: Criar e resolver o objeto Card com os dados lidos
+                if (pan != null && expiryDate != null) {
+                    Log.d(TAG, "Criando objeto Card com dados: PAN=" + pan + ", expiryDate=" + expiryDate + ", cardType=" + cardType);
+                    Card card = new Card(pan, cardType, expiryDate, true, false);
+                    resolvePromise(card);
+                } else {
+                    Log.e(TAG, "Dados do cartão incompletos. PAN ou data de expiração não encontrados.");
+                    rejectPromise("INCOMPLETE_CARD_DATA", "Não foi possível obter dados completos do cartão");
+                }
+                
                 vibrate();
                 
             } catch (IOException e) {

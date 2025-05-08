@@ -2,12 +2,11 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, BackHandler, Share, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams, useRouter } from 'expo-router';
-import { CheckCircle, Share2 } from 'lucide-react-native';
-import { MaterialIcons } from '@expo/vector-icons';
-// import firestore from '@react-native-firebase/firestore';
+import { Share2, ArrowLeft, Check } from 'lucide-react-native';
 import theme from '../../config/theme';
 import Card from '../../components/Card';
 import Button from '../../components/Button';
+import MoneyText from '../../components/MoneyText';
 
 type PaymentData = {
   cardNumber: string;
@@ -30,32 +29,41 @@ export default function PaymentSuccessScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const [paymentData, setPaymentData] = useState<PaymentData | null>(null);
+  const [error, setError] = useState<string | null>(null);
   
+  // Log para depuração
+  console.log('PaymentSuccess: Parâmetros recebidos:', params);
+
   // Carregar dados do pagamento
   useEffect(() => {
     if (params.paymentData) {
       try {
+        console.log('PaymentSuccess: Tentando processar dados de pagamento...');
         const parsedData = JSON.parse(params.paymentData as string) as PaymentData;
+        console.log('PaymentSuccess: Dados processados com sucesso:', parsedData);
         setPaymentData(parsedData);
-        savePaymentToDatabase();
       } catch (error) {
-        console.error('Erro ao processar dados do pagamento:', error);
+        console.error('PaymentSuccess: Erro ao processar dados de pagamento:', error);
+        setError('Erro ao processar dados do pagamento');
         Alert.alert('Erro', 'Ocorreu um erro ao processar os dados do pagamento');
-        router.back();
       }
     } else {
-      Alert.alert('Erro', 'Dados do pagamento não fornecidos');
-      router.back();
+      console.error('PaymentSuccess: Nenhum dado de pagamento recebido');
+      setError('Nenhum dado de pagamento recebido');
+      Alert.alert('Erro', 'Nenhum dado de pagamento recebido');
     }
-  }, [params.paymentData, router]);
+  }, [params.paymentData]);
   
   // Impedir voltar com o botão de hardware
   useEffect(() => {
     const backHandler = BackHandler.addEventListener(
       'hardwareBackPress',
-      () => true
+      () => {
+        handleFinish();
+        return true;
+      }
     );
-    
+
     return () => backHandler.remove();
   }, []);
   
@@ -111,27 +119,9 @@ NFC PayFlow - Pagamento seguro e sem contato
     });
   };
   
-  const handleFinish = async () => {
-    try {
-      // Registrar o pagamento no Firestore
-      // await firestore().collection('payments').add({
-      //   status: 'completed',
-      //   timestamp: firestore.FieldValue.serverTimestamp(),
-      //   amount: paymentData?.amount,
-      //   cardLastFour: paymentData?.cardNumber ? paymentData.cardNumber.slice(-4) : '****',
-      //   cardType: paymentData?.cardType || 'Desconhecido',
-      //   installments: paymentData?.installments || 1,
-      //   paymentType: paymentData?.paymentType || 'credit',
-      //   merchant: paymentData?.chargeData?.merchant || 'N/A',
-      //   description: paymentData?.chargeData?.description || 'N/A'
-      // });
-      
-      router.replace('/');
-    } catch (error) {
-      console.error('Erro ao registrar pagamento:', error);
-      // Mesmo com erro, redireciona para a tela inicial
-      router.replace('/');
-    }
+  // Finalizar transação e voltar para a tela inicial
+  const handleFinish = () => {
+    router.replace('/');
   };
   
   const handleShare = async () => {
@@ -147,24 +137,36 @@ NFC PayFlow - Pagamento seguro e sem contato
     }
   };
 
-  const savePaymentToDatabase = async () => {
-    if (!paymentData) return;
-
-    try {
-      // await firestore().collection('payments').add({
-      //   ...paymentData,
-      //   timestamp: firestore.FieldValue.serverTimestamp(),
-      // });
-    } catch (error) {
-      console.error('Erro ao salvar pagamento:', error);
-    }
-  };
+  if (error) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+            <ArrowLeft size={24} color={theme.colors.text} />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Erro</Text>
+          <View style={{ width: 24 }} />
+        </View>
+        
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorText}>{error}</Text>
+          <Button
+            title="Voltar"
+            onPress={handleFinish}
+            variant="primary"
+            size="lg"
+            style={styles.button}
+          />
+        </View>
+      </SafeAreaView>
+    );
+  }
   
   if (!paymentData) {
     return (
       <SafeAreaView style={styles.container}>
-        <View style={styles.content}>
-          <Text style={styles.errorText}>Erro ao carregar detalhes do pagamento</Text>
+        <View style={styles.loadingContainer}>
+          <Text style={styles.loadingText}>Carregando dados do pagamento...</Text>
         </View>
       </SafeAreaView>
     );
@@ -182,9 +184,17 @@ NFC PayFlow - Pagamento seguro e sem contato
   
   return (
     <SafeAreaView style={styles.container}>
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+          <ArrowLeft size={24} color={theme.colors.text} />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>Pagamento Concluído</Text>
+        <View style={{ width: 24 }} />
+      </View>
+
       <View style={styles.content}>
         <View style={styles.successIcon}>
-          <CheckCircle size={80} color="#FFFFFF" />
+          <Check size={80} color="#FFFFFF" />
         </View>
         
         <Text style={styles.title}>Pagamento Concluído!</Text>
@@ -275,7 +285,6 @@ NFC PayFlow - Pagamento seguro e sem contato
           style={styles.homeButton}
           onPress={handleFinish}
         >
-          <MaterialIcons name="check-circle" size={20} color="#FFFFFF" />
           <Text style={styles.homeButtonText}>Concluir</Text>
         </TouchableOpacity>
       </View>
@@ -287,6 +296,23 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F8F9FA',
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#EEEEEE',
+    backgroundColor: '#FFFFFF',
+  },
+  backButton: {
+    padding: 16,
+  },
+  headerTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333333',
   },
   content: {
     flex: 1,
@@ -411,5 +437,23 @@ const styles = StyleSheet.create({
     color: '#FF3B30',
     textAlign: 'center',
     marginBottom: 16,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    fontSize: 18,
+    color: '#666666',
+  },
+  errorContainer: {
+    flex: 1,
+    padding: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  button: {
+    marginTop: 24,
   },
 }); 
