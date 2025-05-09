@@ -35,6 +35,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 
 public class NfcReaderModule extends ReactContextBaseJavaModule implements NfcAdapter.ReaderCallback, ActivityEventListener, LifecycleEventListener {
 
@@ -865,98 +866,75 @@ public class NfcReaderModule extends ReactContextBaseJavaModule implements NfcAd
     }
     
     private byte[][] getGpoFromPdolExtended(@NonNull byte[] pdol, byte[] alternativeTtq) {
-        List<Pair<Integer, Integer>> entries = new ArrayList<>();
-        int pDolLength = 0;
-        int position = 0;
+        byte[][] result = new byte[2][];
+        List<com.github.devnied.emvnfccard.iso7816emv.TagAndLength> tagAndLength = TlvUtil.parseTagAndLength(pdol);
+        int tagAndLengthSize = tagAndLength.size();
+        StringBuilder returnString = new StringBuilder();
+        returnString.append("The card is requesting " + tagAndLengthSize + (tagAndLengthSize == 1 ? " tag" : " tags")).append("\n");
+        returnString.append("\n");
+        returnString.append("Tag  Tag Name                        Length Value").append("\n");
+        returnString.append("-----------------------------------------------------").append("\n");
         
-        while (position < pdol.length) {
-            int tag;
-            int tagLength = 1;
-            
-            // Determinar o tamanho da tag
-            if ((pdol[position] & 0x1F) == 0x1F) {
-                tag = ((pdol[position] & 0xFF) << 8) | (pdol[position + 1] & 0xFF);
-                tagLength = 2;
+        if (tagAndLengthSize < 1) {
+            returnString.append("     no PDOL provided, returning an empty command").append("\n");
+            returnString.append("-----------------------------------------------------");
+            String tagLength2d = "00"; // length value
+            String tagLength2dAnd2 = "02"; // length value + 2
+            String constructedGpoCommandString = "80A80000" + tagLength2dAnd2 + "83" + tagLength2d + "" + "00";
+            result[0] = hexToBytes(constructedGpoCommandString);
+            result[1] = returnString.toString().getBytes(StandardCharsets.UTF_8);
+            return result;
+        }
+
+        int valueOfTagSum = 0; // total length
+        StringBuilder sb = new StringBuilder(); // takes the default values of the tags
+        DolValues dolValues = new DolValues();
+
+        for (int i = 0; i < tagAndLengthSize; i++) {
+            // get a single tag
+            com.github.devnied.emvnfccard.iso7816emv.TagAndLength tal = tagAndLength.get(i); // eg 9f3704
+            byte[] tagToSearch = tal.getTag().getTagBytes(); // gives the tag 9f37
+            int lengthOfTag = tal.getLength(); // 4
+            String nameOfTag = tal.getTag().getName();
+            valueOfTagSum += tal.getLength(); // add it to the sum
+
+            // now we are trying to find a default value
+            byte[] defaultValue = dolValues.getDolValue(tagToSearch, alternativeTtq);
+            byte[] usedValue = new byte[0];
+            if (defaultValue != null) {
+                if (defaultValue.length > lengthOfTag) {
+                    // cut it to correct length
+                    usedValue = Arrays.copyOfRange(defaultValue, 0, lengthOfTag);
+                } else if (defaultValue.length < lengthOfTag) {
+                    // increase length
+                    usedValue = new byte[lengthOfTag];
+                    System.arraycopy(defaultValue, 0, usedValue, 0, defaultValue.length);
+                } else {
+                    // correct length
+                    usedValue = defaultValue.clone();
+                }
             } else {
-                tag = pdol[position] & 0xFF;
+                // defaultValue is null means the tag was not found in our tags database for default values
+                usedValue = new byte[lengthOfTag];
             }
-            
-            // Obter o comprimento do valor
-            int valueLength = pdol[position + tagLength] & 0xFF;
-            pDolLength += valueLength;
-            
-            // Armazenar a tag e seu comprimento requerido
-            entries.add(new Pair<>(tag, valueLength));
-            
-            // Avançar para a próxima tag
-            position += tagLength + 1;
+
+            // now usedValue does have the correct length
+            sb.append(bytesToHexNpe(usedValue));
+            returnString.append(trimStringRight(bytesToHexNpe(tagToSearch),5))
+                       .append(trimStringRight(nameOfTag, 36))
+                       .append(trimStringRight(String.valueOf(lengthOfTag), 3))
+                       .append(bytesToHexBlankNpe(usedValue))
+                       .append("\n");
         }
-        
-        // Predefinição de valores baseados no MainActivity.java original
-        byte[] result = new byte[pDolLength];
-        int index = 0;
-        
-        // Preencher os valores do PDOL
-        for (Pair<Integer, Integer> entry : entries) {
-            int tag = entry.first;
-            int length = entry.second;
-            
-            switch (tag) {
-                case 0x9F66: // Terminal Transaction Qualifiers (TTQ)
-                    if (alternativeTtq != null && length == alternativeTtq.length) {
-                        System.arraycopy(alternativeTtq, 0, result, index, length);
-                    } else {
-                        Arrays.fill(result, index, index + length, (byte) 0x00);
-                    }
-                    break;
-                case 0x9F02: // Amount, Authorized
-                    Arrays.fill(result, index, index + length, (byte) 0x00);
-                    break;
-                case 0x9F03: // Amount, Other
-                    Arrays.fill(result, index, index + length, (byte) 0x00);
-                    break;
-                case 0x9F1A: // Terminal Country Code
-                    if (length == 2) {
-                        result[index] = (byte) 0x08; // Brazil
-                        result[index + 1] = (byte) 0x26;
-                    } else {
-                        Arrays.fill(result, index, index + length, (byte) 0x00);
-                    }
-                    break;
-                case 0x5F2A: // Transaction Currency Code
-                    if (length == 2) {
-                        result[index] = (byte) 0x09; // BRL
-                        result[index + 1] = (byte) 0x86;
-                    } else {
-                        Arrays.fill(result, index, index + length, (byte) 0x00);
-                    }
-                    break;
-                case 0x9F37: // Unpredictable Number
-                    for (int i = 0; i < length; i++) {
-                        result[index + i] = (byte) (Math.random() * 256);
-                    }
-                    break;
-                default:
-                    Arrays.fill(result, index, index + length, (byte) 0x00);
-            }
-            
-            index += length;
-        }
-        
-        // Construir o comando GPO completo
-        ByteArrayOutputStream gpoCommand = new ByteArrayOutputStream();
-        try {
-            gpoCommand.write(new byte[]{(byte) 0x80, (byte) 0xA8, (byte) 0x00, (byte) 0x00});
-            gpoCommand.write(pDolLength + 2); // Lc: comprimento do PDOL + 2 bytes
-            gpoCommand.write(new byte[]{(byte) 0x83, (byte) pDolLength}); // Tag 83 e comprimento
-            gpoCommand.write(result); // Dados do PDOL
-            gpoCommand.write(0x00); // Le
-        } catch (IOException e) {
-            Log.e(TAG, "Error building GPO command", e);
-        }
-        
-        // Retornar tanto o comando GPO completo quanto os dados do PDOL
-        return new byte[][]{gpoCommand.toByteArray(), result};
+
+        returnString.append("-----------------------------------------------------").append("\n");
+        String constructedGpoString = sb.toString();
+        String tagLength2d = bytesToHexNpe(intToByteArray(valueOfTagSum)); // length value
+        String tagLength2dAnd2 = bytesToHexNpe(intToByteArray(valueOfTagSum + 2)); // length value + 2
+        String constructedGpoCommandString = "80A80000" + tagLength2dAnd2 + "83" + tagLength2d + constructedGpoString + "00";
+        result[0] = hexToBytes(constructedGpoCommandString);
+        result[1] = returnString.toString().getBytes(StandardCharsets.UTF_8);
+        return result;
     }
 
     private String getPanFromTrack2EquivalentData(byte[] track2Data) {
@@ -1188,5 +1166,27 @@ public class NfcReaderModule extends ReactContextBaseJavaModule implements NfcAd
                     16);
         }
         return bytes;
+    }
+
+    private String trimStringRight(String data, int len) {
+        if (data.length() >= len) {
+            data = data.substring(0, (len - 1));
+        }
+        while (data.length() < len) {
+            data = data + " ";
+        }
+        return data;
+    }
+
+    private String bytesToHexBlankNpe(byte[] bytes) {
+        if (bytes == null) return "";
+        StringBuffer result = new StringBuffer();
+        for (byte b : bytes)
+            result.append(Integer.toString((b & 0xff) + 0x100, 16).substring(1)).append(" ");
+        return result.toString();
+    }
+
+    private byte[] intToByteArray(int value) {
+        return new BigInteger(String.valueOf(value)).toByteArray();
     }
 } 

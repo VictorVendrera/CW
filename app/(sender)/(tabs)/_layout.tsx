@@ -3,8 +3,10 @@ import { Tabs } from 'expo-router';
 import { Home, CreditCard, FileText, Settings, Plus, Bell } from 'lucide-react-native';
 import { View } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function SenderTabsLayout() {
+  const insets = useSafeAreaInsets();
   const router = useRouter();
 
   return (
@@ -16,8 +18,8 @@ export default function SenderTabsLayout() {
         tabBarStyle: {
           borderTopWidth: 1,
           borderTopColor: '#EEEEEE',
-          height: 60,
-          paddingBottom: 8,
+          height: 60 + insets.bottom,
+          paddingBottom: 8 + insets.bottom,
           paddingTop: 8,
         },
       }}

@@ -7,6 +7,7 @@ import Button from '../../components/Button';
 import Card from '../../components/Card';
 import MoneyText from '../../components/MoneyText';
 import Section from '../../components/Section';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type ChargeData = {
   id: string;
@@ -19,6 +20,7 @@ type ChargeData = {
 };
 
 export default function PaymentDetailsScreen() {
+  const insets = useSafeAreaInsets();
   const router = useRouter();
   const params = useLocalSearchParams();
   const [charge, setCharge] = useState<ChargeData | null>(null);
@@ -53,15 +55,7 @@ export default function PaymentDetailsScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <ArrowLeft size={24} color={theme.colors.text} />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Detalhes do Pagamento</Text>
-        <View style={{ width: 24 }} />
-      </View>
-
-      <ScrollView style={styles.scrollContent}>
+      <ScrollView style={styles.scrollContent} contentContainerStyle={{ paddingBottom: 24 + insets.bottom }}>
         <Card variant="elevated" style={styles.merchantCard}>
           <Text style={styles.merchantName}>{charge.merchant}</Text>
           <Text style={styles.merchantId}>ID: {charge.merchantId}</Text>
@@ -131,14 +125,14 @@ export default function PaymentDetailsScreen() {
         </Card>
       </ScrollView>
       
-      <View style={styles.footer}>
+      <View style={[styles.footer, { paddingBottom: 24 + insets.bottom }]}>
         <Button
           title="Pagar com NFC"
           onPress={handlePayWithNFC}
           variant="primary"
-          size="lg"
+          size="md"
           fullWidth
-          icon={<CreditCard size={20} color={theme.colors.white} />}
+          icon={<CreditCard size={18} color={theme.colors.white} />}
           iconPosition="left"
         />
       </View>
@@ -150,23 +144,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: theme.colors.background,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 24,
-    backgroundColor: theme.colors.background,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.divider,
-  },
-  backButton: {
-    padding: 8,
-  },
-  headerTitle: {
-    fontFamily: theme.typography.fontFamily.bold,
-    fontSize: theme.typography.fontSize.lg,
-    color: theme.colors.text,
   },
   scrollContent: {
     flex: 1,

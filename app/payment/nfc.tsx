@@ -23,6 +23,7 @@ import Section from '../../components/Section';
 import OptionSelector from '../../components/OptionSelector';
 import Checkbox from '../../components/Checkbox';
 import { useNFC } from '../../hooks/useNFC';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type ChargeData = {
   id: string;
@@ -37,6 +38,7 @@ type ChargeData = {
 const NFCPaymentScreen = () => {
   const router = useRouter();
   const params = useLocalSearchParams();
+  const insets = useSafeAreaInsets();
   
   // Estados locais da tela
   const [charge, setCharge] = useState<ChargeData | null>(null);
@@ -49,7 +51,7 @@ const NFCPaymentScreen = () => {
   const { 
     status, 
     error: nfcError, 
-    cardData, 
+    cardData,
     startCardReading,
     stopCardReading,
     resetNfcState
@@ -105,22 +107,22 @@ const NFCPaymentScreen = () => {
   useEffect(() => {
     if (status === 'success' && cardData) {
       console.log('NFC: Navegando para tela de sucesso com dados:', cardData);
-      
-      try {
-        // Preparar dados para navegação
-        const navigationData = {
-          cardNumber: cardData.cardNumber,
-          expiryDate: cardData.expiryDate,
-          cardType: cardData.cardType || 'Desconhecido',
-          chargeData: charge,
-          amount: calculateTotal(),
-          installments,
-          paymentType,
+        
+        try {
+          // Preparar dados para navegação
+          const navigationData = {
+            cardNumber: cardData.cardNumber,
+            expiryDate: cardData.expiryDate,
+            cardType: cardData.cardType || 'Desconhecido',
+            chargeData: charge,
+            amount: calculateTotal(),
+            installments,
+            paymentType,
           timestamp: Date.now()
-        };
-        
-        console.log('NFC: Dados preparados para navegação:', navigationData);
-        
+          };
+          
+          console.log('NFC: Dados preparados para navegação:', navigationData);
+          
         // Forçar navegação imediata para a tela de sucesso com múltiplas tentativas
         const navigateToSuccess = () => {
           console.log('NFC: Tentando navegar para tela de sucesso...');
@@ -147,11 +149,11 @@ const NFCPaymentScreen = () => {
         // Terceira tentativa após um atraso maior (caso as anteriores falhem)
         setTimeout(navigateToSuccess, 1500);
         
-      } catch (error) {
-        console.error('NFC: Erro ao navegar para tela de sucesso:', error);
-        setErrorMessage('Erro ao processar pagamento');
+        } catch (error) {
+          console.error('NFC: Erro ao navegar para tela de sucesso:', error);
+          setErrorMessage('Erro ao processar pagamento');
+        }
       }
-    }
   }, [status, cardData, charge, installments, paymentType, router]);
 
   // Adicionar listener para mudanças no estado do app
@@ -309,6 +311,7 @@ const NFCPaymentScreen = () => {
               </Section>
             )}
 
+            {/*
             <Card variant="outlined" style={styles.cardFeeContainer}>
               <Checkbox
                 checked={chargeCardFee}
@@ -316,7 +319,6 @@ const NFCPaymentScreen = () => {
                 label="Repassar taxas para o cliente"
                 style={styles.checkbox}
               />
-              
               {chargeCardFee && (
                 <View style={styles.feeInfo}>
                   <Text style={styles.feeInfoText}>
@@ -325,6 +327,7 @@ const NFCPaymentScreen = () => {
                 </View>
               )}
             </Card>
+            */}
 
             <View style={styles.securityNotice}>
               <Check size={20} color={theme.colors.success} />
@@ -452,9 +455,9 @@ const NFCPaymentScreen = () => {
             title="Realizar pagamento"
             onPress={startPayment}
             variant="primary"
-            size="lg"
+            size="md"
             fullWidth
-            icon={<CreditCard size={20} color={theme.colors.white} />}
+            icon={<CreditCard size={18} color={theme.colors.white} />}
             iconPosition="left"
           />
         );
@@ -522,14 +525,14 @@ const NFCPaymentScreen = () => {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-      <TouchableOpacity
+        <TouchableOpacity
           onPress={cancelTransaction} 
           style={styles.backButton}
           disabled={status === 'reading' || status === 'detected'}
         >
           <ArrowLeft size={24} color={theme.colors.text} />
-      </TouchableOpacity>
-        <Text style={styles.headerTitle}>
+        </TouchableOpacity>
+        <Text style={[styles.headerTitle, { marginTop: 20 }]}>
           {status === 'waiting' || status === 'idle' || status === 'cancelled'
             ? 'Pagamento com Cartão' 
             : status === 'success'
@@ -539,11 +542,11 @@ const NFCPaymentScreen = () => {
             : 'Processando Pagamento'}
         </Text>
         <View style={{ width: 24 }} />
-        </View>
+      </View>
 
       {renderContent()}
       
-      <View style={styles.footer}>
+      <View style={[styles.footer, { paddingBottom: 24 + insets.bottom }]}>
         {renderFooter()}
       </View>
     </SafeAreaView>

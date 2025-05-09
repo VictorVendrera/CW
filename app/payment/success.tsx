@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, BackHandler, Share, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, BackHandler, Share, Alert, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams, useRouter } from 'expo-router';
 import { Share2, ArrowLeft, Check } from 'lucide-react-native';
@@ -33,7 +33,7 @@ export default function PaymentSuccessScreen() {
   
   // Log para depuração
   console.log('PaymentSuccess: Parâmetros recebidos:', params);
-
+  
   // Carregar dados do pagamento
   useEffect(() => {
     if (params.paymentData) {
@@ -63,7 +63,7 @@ export default function PaymentSuccessScreen() {
         return true;
       }
     );
-
+    
     return () => backHandler.remove();
   }, []);
   
@@ -121,7 +121,7 @@ NFC PayFlow - Pagamento seguro e sem contato
   
   // Finalizar transação e voltar para a tela inicial
   const handleFinish = () => {
-    router.replace('/');
+      router.replace('/');
   };
   
   const handleShare = async () => {
@@ -160,7 +160,7 @@ NFC PayFlow - Pagamento seguro e sem contato
         </View>
       </SafeAreaView>
     );
-  }
+    }
   
   if (!paymentData) {
     return (
@@ -192,17 +192,14 @@ NFC PayFlow - Pagamento seguro e sem contato
         <View style={{ width: 24 }} />
       </View>
 
-      <View style={styles.content}>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.successIcon}>
-          <Check size={80} color="#FFFFFF" />
+          <Check size={48} color="#FFFFFF" />
         </View>
-        
         <Text style={styles.title}>Pagamento Concluído!</Text>
-        
         <Text style={styles.amount}>
           {formatCurrency(paymentData.amount)}
         </Text>
-        
         <View style={styles.receiptCard}>
           <Text style={styles.receiptTitle}>Recibo de Pagamento</Text>
           
@@ -272,13 +269,16 @@ NFC PayFlow - Pagamento seguro e sem contato
         <View style={styles.buttonsContainer}>
           <TouchableOpacity 
             style={styles.shareButton}
-            onPress={shareReceipt}
+            onPress={() => router.push({
+              pathname: '/payment/receipt-share',
+              params: { paymentData: JSON.stringify(paymentData) }
+            })}
           >
             <Share2 size={20} color="#00CC66" />
             <Text style={styles.shareButtonText}>Compartilhar Recibo</Text>
           </TouchableOpacity>
         </View>
-      </View>
+      </ScrollView>
       
       <View style={styles.footer}>
         <TouchableOpacity 
@@ -301,7 +301,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 20,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#EEEEEE',
     backgroundColor: '#FFFFFF',
@@ -315,15 +317,14 @@ const styles = StyleSheet.create({
     color: '#333333',
   },
   content: {
-    flex: 1,
+    flexGrow: 1,
     padding: 20,
     alignItems: 'center',
-    justifyContent: 'center',
   },
   successIcon: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
+    width: 80,
+    height: 80,
+    borderRadius: 40,
     backgroundColor: '#00CC66',
     justifyContent: 'center',
     alignItems: 'center',
