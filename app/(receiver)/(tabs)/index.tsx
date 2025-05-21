@@ -11,6 +11,10 @@ export default function ReceiverHomeScreen() {
     router.push('/scan-qr');
   };
 
+  const handlePayments = () => {
+    router.push('/manual-payment');
+  };
+
   return (
     <SafeAreaView style={styles.container} edges={['bottom']}>
       <ScrollView style={styles.scrollView}>
@@ -29,7 +33,7 @@ export default function ReceiverHomeScreen() {
               <Text style={styles.actionText}>Escanear QR</Text>
             </TouchableOpacity>
             
-            <TouchableOpacity style={styles.actionButton}>
+            <TouchableOpacity style={styles.actionButton} onPress={handlePayments}>
               <View style={styles.actionIcon}>
                 <CreditCard size={24} color="#0066CC" />
               </View>

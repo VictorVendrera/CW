@@ -1,193 +1,277 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, Share, Alert } from 'react-native';
-import { router, useLocalSearchParams } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
-import { MaterialIcons, FontAwesome5 } from '@expo/vector-icons';
-import { usePaymentToken } from '../../hooks/usePaymentToken';
-import { TouchableOpacity } from 'react-native-gesture-handler';
+import { View, Text, StyleSheet, ActivityIndicator, Share, Alert, TouchableOpacity, Linking, ScrollView } from 'react-native';
+import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
+import { ArrowLeft, Copy, Share2, QrCode, CheckCircle } from 'lucide-react-native';
 import QRCode from 'react-native-qrcode-svg';
 import * as Clipboard from 'expo-clipboard';
+import { getChargeById } from '../../services/firebase';
+import theme from '../../config/theme';
+import Button from '../../components/Button';
+import Card from '../../components/Card';
+import MoneyText from '../../components/MoneyText';
 
-// Definir tipo para os dados de pagamento
 interface PaymentData {
   id: string;
+  accessToken: string;
   amount: number;
   description: string;
+  customer: string;
   merchantName: string;
   merchantId: string;
   date: string;
-}
-
-// Definir tipo para o token
-interface Token {
-  id: string;
   status: string;
-  createdAt: Date;
-  expiresAt: Date;
+  createdAt: string;
+  expiresAt: string;
 }
 
-export default function SharePayment() {
-  const { id } = useLocalSearchParams();
+export default function SharePaymentScreen() {
+  const params = useLocalSearchParams();
+  const router = useRouter();
+  const chargeId = typeof params.chargeId === 'string' ? params.chargeId : '';
+  const token = typeof params.token === 'string' ? params.token : '';
+  
   const [loading, setLoading] = useState(true);
   const [paymentData, setPaymentData] = useState<PaymentData | null>(null);
-  const { generateToken, tokenError, isGeneratingToken } = usePaymentToken();
-  const [token, setToken] = useState<Token | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [creationSuccess, setCreationSuccess] = useState(false);
 
   useEffect(() => {
-    // Em um cenário real, buscaríamos os dados do pagamento do banco de dados
-    // Aqui estamos simulando com dados fixos baseados no ID
-    setTimeout(() => {
-      setPaymentData({
-        id: id?.toString() || 'unknown',
-        amount: 150.75,
-        description: 'Pagamento de serviço',
-        merchantName: 'Empresa XPTO',
-        merchantId: 'MRC12345',
-        date: new Date().toISOString(),
-      });
-      setLoading(false);
-    }, 1000);
-  }, [id]);
+    const fetchChargeData = async () => {
+      if (!chargeId) {
+        setError('ID de cobrança não fornecido');
+        setLoading(false);
+        return;
+      }
 
-  useEffect(() => {
-    if (paymentData && !token) {
-      generatePaymentToken();
-    }
-  }, [paymentData]);
+      try {
+        const charge = await getChargeById(chargeId);
+        setPaymentData(charge as PaymentData);
+        setCreationSuccess(true);
+        console.log('Cobrança criada com sucesso:', charge);
+      } catch (error) {
+        console.error('Erro ao buscar dados da cobrança:', error);
+        setError('Não foi possível carregar os dados da cobrança');
+      } finally {
+        setLoading(false);
+      }
+    };
 
-  const generatePaymentToken = async () => {
+    fetchChargeData();
+  }, [chargeId]);
+
+  const handleShare = async () => {
     if (!paymentData) return;
     
     try {
-      const newToken = await generateToken({
-        paymentId: paymentData.id,
-        amount: paymentData.amount,
-        description: paymentData.description,
-        merchantId: paymentData.merchantId,
-        merchantName: paymentData.merchantName,
-      });
+      const accessToken = paymentData.accessToken || token;
+      // Link web (HTTPS) que será reconhecido como clicável
+      const webLink = 'https://nfcpayflow.app/pay/' + accessToken;
       
-      setToken(newToken);
+      // Cria uma mensagem para compartilhar
+      const shareMessage = 
+        'Você recebeu uma cobrança de ' + 
+        paymentData.merchantName + 
+        '.\n\nValor: R$ ' + 
+        paymentData.amount.toFixed(2) + 
+        '\nDescrição: ' + 
+        paymentData.description + 
+        '\n\nUse o código: ' + 
+        accessToken + 
+        '\n\nOu acesse: ' + 
+        webLink;
+      
+      await Share.share({
+        message: shareMessage,
+        title: 'Compartilhar cobrança'
+      });
     } catch (error) {
-      Alert.alert('Erro', 'Não foi possível gerar o token de pagamento');
-      console.error(error);
+      console.error('Erro ao compartilhar:', error);
+      Alert.alert('Erro', 'Não foi possível compartilhar a cobrança');
     }
   };
 
-  const handleShare = async () => {
-    if (!token || !paymentData) return;
+  const copyLinkToClipboard = async () => {
+    if (!paymentData) return;
+    
+    const accessToken = paymentData.accessToken || token;
+    // Usar o link web para máxima compatibilidade
+    const webLink = 'https://nfcpayflow.app/pay/' + accessToken;
     
     try {
-      const result = await Share.share({
-        message: `Você recebeu uma cobrança de ${paymentData.merchantName}. Use o código: ${token.id} para pagar R$ ${paymentData.amount.toFixed(2)}`,
-        url: `nfcpayflow://payment/${token.id}`,
-        title: 'Compartilhar pagamento'
-      });
+      await Clipboard.setStringAsync(webLink);
+      Alert.alert('Copiado!', 'Link de pagamento copiado para a área de transferência');
     } catch (error) {
-      Alert.alert('Erro', 'Não foi possível compartilhar o token');
+      console.error('Erro ao copiar para o clipboard:', error);
+      Alert.alert('Erro', 'Não foi possível copiar o link');
+    }
+  };
+  
+  const openPaymentLink = async (accessToken: string) => {
+    try {
+      const webLink = 'https://nfcpayflow.app/pay/' + accessToken;
+      const canOpen = await Linking.canOpenURL(webLink);
+      
+      if (canOpen) {
+        await Linking.openURL(webLink);
+      } else {
+        Alert.alert('Erro', 'Não foi possível abrir o link de pagamento');
+      }
+    } catch (error) {
+      console.error('Erro ao abrir link:', error);
+      Alert.alert('Erro', 'Ocorreu um problema ao tentar abrir o link');
     }
   };
 
-  const copyTokenToClipboard = async () => {
-    if (!token) return;
-    
-    await Clipboard.setStringAsync(token.id);
-    Alert.alert('Sucesso', 'Token copiado para a área de transferência');
-  };
-
-  if (loading || !paymentData) {
+  if (loading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#0066CC" />
+        <Stack.Screen options={{ headerShown: false }} />
+        <ActivityIndicator size="large" color={theme.colors.primary} />
         <Text style={styles.loadingText}>Carregando dados do pagamento...</Text>
       </View>
     );
   }
 
+  if (error || !paymentData) {
+    return (
+      <View style={styles.errorContainer}>
+        <Stack.Screen options={{ headerShown: false }} />
+        <Text style={styles.errorTitle}>Erro</Text>
+        <Text style={styles.errorMessage}>{error || 'Não foi possível carregar os dados da cobrança'}</Text>
+        <Button
+          title="Voltar"
+          onPress={() => router.back()}
+          variant="outline"
+          size="md"
+        />
+      </View>
+    );
+  }
+
+  const accessToken = paymentData.accessToken || token;
+  const qrValue = 'https://nfcpayflow.app/pay/' + accessToken;
+  const webLink = 'https://nfcpayflow.app/pay/' + accessToken;
+
   return (
     <View style={styles.container}>
-      <StatusBar style="light" />
+      <Stack.Screen options={{ 
+        headerShown: false,
+        headerTitle: () => <Text style={styles.headerTitle}>Compartilhar Cobrança</Text>
+      }} />
       
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <MaterialIcons name="arrow-back" size={24} color="white" />
+          <ArrowLeft size={24} color={theme.colors.white} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Compartilhar Pagamento</Text>
+        <Text style={styles.headerTitle}>Compartilhar Cobrança</Text>
+        <View style={{ width: 24 }} />
       </View>
 
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Detalhes do Pagamento</Text>
-        
-        <View style={styles.infoRow}>
-          <Text style={styles.infoLabel}>Valor:</Text>
-          <Text style={styles.infoValue}>R$ {paymentData.amount.toFixed(2)}</Text>
+      {creationSuccess && (
+        <View style={styles.successBanner}>
+          <CheckCircle size={20} color={theme.colors.white} />
+          <Text style={styles.successText}>Cobrança criada com sucesso!</Text>
         </View>
-        
-        <View style={styles.infoRow}>
-          <Text style={styles.infoLabel}>Descrição:</Text>
-          <Text style={styles.infoValue}>{paymentData.description}</Text>
-        </View>
-        
-        <View style={styles.infoRow}>
-          <Text style={styles.infoLabel}>Beneficiário:</Text>
-          <Text style={styles.infoValue}>{paymentData.merchantName}</Text>
-        </View>
-      </View>
+      )}
 
-      <View style={styles.tokenSection}>
-        <Text style={styles.tokenTitle}>Token de Pagamento</Text>
-        
-        {isGeneratingToken ? (
-          <ActivityIndicator size="large" color="#0066CC" />
-        ) : tokenError ? (
-          <View style={styles.errorContainer}>
-            <FontAwesome5 name="exclamation-circle" size={24} color="red" />
-            <Text style={styles.errorText}>Erro ao gerar token</Text>
-            <TouchableOpacity 
-              style={styles.retryButton}
-              onPress={generatePaymentToken}
-            >
-              <Text style={styles.retryButtonText}>Tentar Novamente</Text>
-            </TouchableOpacity>
+      <ScrollView 
+        style={styles.scrollView} 
+        contentContainerStyle={styles.scrollContent} 
+        showsVerticalScrollIndicator={false}
+      >
+        <Card variant="elevated" style={styles.chargeCard}>
+          <Text style={styles.cardTitle}>Detalhes da Cobrança</Text>
+          
+          <View style={styles.infoRow}>
+            <Text style={styles.infoLabel}>Valor:</Text>
+            <MoneyText value={paymentData.amount} size="md" />
           </View>
-        ) : token ? (
-          <View style={styles.tokenContainer}>
-            <QRCode
-              value={`nfcpayflow://payment/${token.id}`}
-              size={180}
-              color="#000"
-              backgroundColor="#FFF"
-            />
-            <Text style={styles.tokenText}>{token.id}</Text>
-            
-            <View style={styles.tokenActions}>
-              <TouchableOpacity 
-                style={styles.actionButton}
-                onPress={copyTokenToClipboard}
-              >
-                <FontAwesome5 name="copy" size={18} color="#0066CC" />
-                <Text style={styles.actionButtonText}>Copiar</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={styles.actionButton}
-                onPress={handleShare}
-              >
-                <FontAwesome5 name="share-alt" size={18} color="#0066CC" />
-                <Text style={styles.actionButtonText}>Compartilhar</Text>
-              </TouchableOpacity>
+          
+          <View style={styles.infoRow}>
+            <Text style={styles.infoLabel}>Descrição:</Text>
+            <Text style={styles.infoValue}>{paymentData.description}</Text>
+          </View>
+          
+          {paymentData.customer && (
+            <View style={styles.infoRow}>
+              <Text style={styles.infoLabel}>Cliente:</Text>
+              <Text style={styles.infoValue}>{paymentData.customer}</Text>
             </View>
+          )}
+          
+          <View style={styles.infoRow}>
+            <Text style={styles.infoLabel}>Data:</Text>
+            <Text style={styles.infoValue}>{paymentData.date}</Text>
           </View>
-        ) : (
-          <ActivityIndicator size="large" color="#0066CC" />
-        )}
-      </View>
+          
+          <View style={styles.infoRow}>
+            <Text style={styles.infoLabel}>Empresa:</Text>
+            <Text style={styles.infoValue}>{paymentData.merchantName}</Text>
+          </View>
+          
+          <View style={styles.infoRow}>
+            <Text style={styles.infoLabel}>Status:</Text>
+            <Text style={[styles.infoValue, paymentData.status === 'paid' ? styles.paidStatus : styles.pendingStatus]}>
+              {paymentData.status === 'paid' ? <Text>Pago</Text> : <Text>Pendente</Text>}
+            </Text>
+          </View>
+        </Card>
 
-      <View style={styles.footer}>
-        <Text style={styles.footerText}>
-          Este token expira em 30 minutos
-        </Text>
-      </View>
+        <Card variant="outlined" style={styles.qrContainer}>
+          <Text style={styles.qrTitle}>Compartilhe esta cobrança</Text>
+          
+          <View style={styles.qrCodeBox}>
+            <QRCode
+              value={qrValue}
+              size={180}
+              color={theme.colors.text}
+              backgroundColor="white"
+              logoBackgroundColor="white"
+              ecl="M"
+            />
+          </View>
+          
+          <Text style={styles.tokenText}>
+            Código: <Text style={styles.tokenValue}>{accessToken}</Text>
+          </Text>
+          
+          <TouchableOpacity onPress={() => openPaymentLink(accessToken)}>
+            <Text style={styles.linkText}>
+              {webLink}
+            </Text>
+          </TouchableOpacity>
+          
+          <View style={styles.actionButtons}>
+            <Button
+              title="Copiar Link"
+              onPress={copyLinkToClipboard}
+              variant="outline"
+              size="md"
+              style={styles.actionButton}
+              icon={<Copy size={16} color={theme.colors.primary} />}
+              iconPosition="left"
+            />
+            
+            <Button
+              title="Compartilhar"
+              onPress={handleShare}
+              variant="primary"
+              size="md"
+              style={styles.actionButton}
+              icon={<Share2 size={16} color={theme.colors.white} />}
+              iconPosition="left"
+            />
+          </View>
+        </Card>
+        
+        <View style={styles.footerContainer}>
+          <Text style={styles.footerText}>
+            Esta cobrança expira em 24 horas
+          </Text>
+        </View>
+        
+        <View style={styles.spacer} />
+      </ScrollView>
     </View>
   );
 }
@@ -195,141 +279,170 @@ export default function SharePayment() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: theme.colors.background,
+  },
+  header: {
+    backgroundColor: theme.colors.primary,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 50,
+    paddingBottom: 16,
+    paddingHorizontal: 16,
+  },
+  backButton: {
+    padding: 8,
+  },
+  headerTitle: {
+    fontSize: theme.typography.fontSize.lg,
+    fontFamily: theme.typography.fontFamily.bold,
+    color: theme.colors.white,
+  },
+  successBanner: {
+    backgroundColor: theme.colors.success,
+    padding: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  successText: {
+    color: theme.colors.white,
+    fontFamily: theme.typography.fontFamily.medium,
+    fontSize: theme.typography.fontSize.md,
+    marginLeft: 8,
+  },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    padding: 16,
+    paddingBottom: 80,
+    flexGrow: 1,
+  },
+  content: {
+    flex: 1,
+    padding: 16,
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#f5f5f5',
+    backgroundColor: theme.colors.background,
   },
   loadingText: {
-    marginTop: 10,
-    fontSize: 16,
-    color: '#555',
+    marginTop: 16,
+    fontSize: theme.typography.fontSize.md,
+    color: theme.colors.textSecondary,
   },
-  header: {
-    backgroundColor: '#0066CC',
-    paddingTop: 50,
-    paddingBottom: 15,
-    paddingHorizontal: 20,
-    flexDirection: 'row',
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
     alignItems: 'center',
+    padding: 20,
+    backgroundColor: theme.colors.background,
   },
-  backButton: {
-    padding: 5,
+  errorTitle: {
+    fontSize: theme.typography.fontSize.xl,
+    fontFamily: theme.typography.fontFamily.bold,
+    color: theme.colors.error,
+    marginBottom: 12,
   },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: 'white',
-    marginLeft: 10,
+  errorMessage: {
+    fontSize: theme.typography.fontSize.md,
+    color: theme.colors.textSecondary,
+    textAlign: 'center',
+    marginBottom: 24,
   },
-  card: {
-    backgroundColor: 'white',
-    borderRadius: 10,
-    margin: 16,
+  chargeCard: {
+    marginBottom: 16,
     padding: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    width: '100%',
   },
   cardTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 15,
-    color: '#333',
+    fontSize: theme.typography.fontSize.lg,
+    fontFamily: theme.typography.fontFamily.bold,
+    color: theme.colors.text,
+    marginBottom: 16,
   },
   infoRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
     paddingVertical: 8,
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
+    borderBottomColor: theme.colors.divider,
   },
   infoLabel: {
-    fontSize: 16,
-    color: '#555',
+    fontSize: theme.typography.fontSize.md,
+    color: theme.colors.textSecondary,
   },
   infoValue: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#333',
+    fontSize: theme.typography.fontSize.md,
+    fontFamily: theme.typography.fontFamily.medium,
+    color: theme.colors.text,
+    flex: 1,
+    textAlign: 'right',
   },
-  tokenSection: {
-    backgroundColor: 'white',
-    borderRadius: 10,
-    margin: 16,
-    padding: 16,
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+  pendingStatus: {
+    color: theme.colors.warning,
   },
-  tokenTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 20,
-    color: '#333',
-    alignSelf: 'flex-start',
+  paidStatus: {
+    color: theme.colors.success,
   },
-  tokenContainer: {
-    alignItems: 'center',
-  },
-  tokenText: {
-    marginTop: 15,
-    fontSize: 14,
-    fontFamily: 'monospace',
-    letterSpacing: 1,
-    color: '#333',
-  },
-  tokenActions: {
-    flexDirection: 'row',
-    marginTop: 20,
-    width: '100%',
-    justifyContent: 'space-around',
-  },
-  actionButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 10,
-    borderRadius: 5,
-    backgroundColor: '#f0f0f0',
-  },
-  actionButtonText: {
-    marginLeft: 5,
-    color: '#0066CC',
-    fontWeight: '500',
-  },
-  errorContainer: {
+  qrContainer: {
     alignItems: 'center',
     padding: 20,
+    marginBottom: 20,
+    width: '100%',
   },
-  errorText: {
-    color: 'red',
-    fontSize: 16,
-    marginTop: 10,
+  qrTitle: {
+    fontSize: theme.typography.fontSize.md,
+    fontFamily: theme.typography.fontFamily.bold,
+    color: theme.colors.text,
+    marginBottom: 16,
   },
-  retryButton: {
-    marginTop: 15,
-    padding: 10,
-    backgroundColor: '#0066CC',
-    borderRadius: 5,
-  },
-  retryButtonText: {
-    color: 'white',
-    fontWeight: 'bold',
-  },
-  footer: {
+  qrCodeBox: {
+    backgroundColor: 'white',
     padding: 16,
+    borderRadius: 10,
+    marginBottom: 16,
     alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tokenText: {
+    fontSize: theme.typography.fontSize.md,
+    color: theme.colors.textSecondary,
+    marginBottom: 12,
+  },
+  tokenValue: {
+    fontFamily: theme.typography.fontFamily.medium,
+    letterSpacing: 2,
+  },
+  linkText: {
+    fontSize: theme.typography.fontSize.sm,
+    color: theme.colors.primary,
+    textDecorationLine: 'underline',
+    marginBottom: 24,
+  },
+  actionButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    width: '100%',
+  },
+  actionButton: {
+    flex: 1,
+    marginHorizontal: 8,
+  },
+  footerContainer: {
+    paddingVertical: 16,
+    paddingBottom: 20,
   },
   footerText: {
-    color: '#666',
-    fontSize: 14,
+    fontSize: theme.typography.fontSize.sm,
+    color: theme.colors.textSecondary,
+    textAlign: 'center',
+  },
+  spacer: {
+    height: 70,
   },
 }); 

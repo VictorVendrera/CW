@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "608512580374",
+    "firebase_url": "https://testenfc-16c32-default-rtdb.firebaseio.com",
+    "project_id": "testenfc-16c32",
+    "storage_bucket": "testenfc-16c32.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:608512580374:android:1d1ed34801dbb0a2f88e37",
+        "android_client_info": {
+          "package_name": "com.nfcpayflow.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDgml_Jk-gNw8KdaxzHFegzFQJKP8SstC4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+} 

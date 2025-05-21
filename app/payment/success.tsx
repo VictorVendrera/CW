@@ -1,12 +1,14 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, BackHandler, Share, Alert, ScrollView } from 'react-native';
+import React, { useEffect, useState, useRef } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, BackHandler, Share, Alert, ScrollView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams, useRouter } from 'expo-router';
-import { Share2, ArrowLeft, Check } from 'lucide-react-native';
+import { Share2, ArrowLeft, Check, AlertCircle } from 'lucide-react-native';
 import theme from '../../config/theme';
 import Card from '../../components/Card';
 import Button from '../../components/Button';
 import MoneyText from '../../components/MoneyText';
+import ViewShot from 'react-native-view-shot';
+import * as Sharing from 'expo-sharing';
 
 type PaymentData = {
   cardNumber: string;
@@ -18,11 +20,18 @@ type PaymentData = {
     description: string;
     customer: string;
     date: string;
-    merchant: string;
+    merchantName: string;
+    merchantId: string;
+    maxInstallments?: number;
+    installmentsWithoutFee?: number;
+    installmentFeeRate?: number;
   };
   amount: number;
+  originalAmount?: number;
   installments: number;
   paymentType: 'credit' | 'debit';
+  installmentsWithoutFee?: number;
+  installmentFeeRate?: number;
 };
 
 export default function PaymentSuccessScreen() {
@@ -30,6 +39,7 @@ export default function PaymentSuccessScreen() {
   const params = useLocalSearchParams();
   const [paymentData, setPaymentData] = useState<PaymentData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const receiptRef = useRef<any>(null);
   
   // Log para depuração
   console.log('PaymentSuccess: Parâmetros recebidos:', params);
@@ -67,35 +77,36 @@ export default function PaymentSuccessScreen() {
     return () => backHandler.remove();
   }, []);
   
-  // Função para compartilhar recibo
-  const shareReceipt = async () => {
-    if (!paymentData) return;
+  // Função para compartilhar captura da tela de recibo
+  const shareScreenshot = async () => {
+    if (!paymentData || !receiptRef.current) return;
     
     try {
-      const lastFourDigits = paymentData.cardNumber 
-        ? paymentData.cardNumber.slice(-4)
-        : '****';
-
-      const receiptText = `
-Pagamento Confirmado!
-
-Valor: ${formatCurrency(paymentData.amount)}
-${paymentData.installments > 1 ? `Parcelamento: ${paymentData.installments}x de ${formatCurrency(paymentData.amount / paymentData.installments)}` : ''}
-Descrição: ${paymentData.chargeData?.description || 'N/A'}
-Comerciante: ${paymentData.chargeData?.merchant || 'N/A'}
-Data: ${new Date().toLocaleDateString('pt-BR')}
-Cartão: **** **** **** ${lastFourDigits}
-Tipo: ${paymentData.cardType}
-Validade: ${paymentData.expiryDate}
-
-NFC PayFlow - Pagamento seguro e sem contato
-      `;
+      Alert.alert('Capturando comprovante...', 'Aguarde enquanto preparamos seu comprovante para compartilhamento.');
       
-      await Share.share({
-        message: receiptText,
-      });
+      // Capturar a tela
+      const uri = await receiptRef.current.capture();
+      
+      // Compartilhar a imagem
+      if (Platform.OS === 'android' || Platform.OS === 'ios') {
+        const canShare = await Sharing.isAvailableAsync();
+        if (canShare) {
+          await Sharing.shareAsync(uri, {
+            mimeType: 'image/jpeg',
+            dialogTitle: 'Compartilhar comprovante de pagamento',
+            UTI: 'public.jpeg'
+          });
+        } else {
+          await Share.share({
+            url: uri,
+            title: 'Comprovante de Pagamento',
+            message: 'Pagamento de ' + formatCurrency(paymentData.amount) + ' realizado com sucesso!',
+          });
+        }
+      }
     } catch (error) {
-      console.error('Erro ao compartilhar recibo:', error);
+      console.error('Erro ao compartilhar captura:', error);
+      Alert.alert('Erro', 'Não foi possível compartilhar o comprovante');
     }
   };
   
@@ -122,19 +133,6 @@ NFC PayFlow - Pagamento seguro e sem contato
   // Finalizar transação e voltar para a tela inicial
   const handleFinish = () => {
       router.replace('/');
-  };
-  
-  const handleShare = async () => {
-    if (!paymentData) return;
-    
-    try {
-      const message = `Pagamento de ${formatCurrency(paymentData.amount)} realizado com sucesso!\n\nDetalhes:\n- Cliente: ${paymentData.chargeData.customer}\n- Descrição: ${paymentData.chargeData.description}\n- Data: ${paymentData.chargeData.date}`;
-      await Share.share({
-        message,
-      });
-    } catch (error) {
-      console.error('Erro ao compartilhar:', error);
-    }
   };
 
   if (error) {
@@ -181,112 +179,134 @@ NFC PayFlow - Pagamento seguro e sem contato
   const displayExpiryDate = paymentData.expiryDate
     ? paymentData.expiryDate
     : 'MM/AA';
+    
+  // Verificar se tem juros aplicados
+  const hasInterest = paymentData.paymentType === 'credit' && 
+    paymentData.installments > 1 && 
+    paymentData.installments > (paymentData.installmentsWithoutFee || 3);
   
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+        <TouchableOpacity onPress={handleFinish} style={styles.backButton}>
           <ArrowLeft size={24} color={theme.colors.text} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Pagamento Concluído</Text>
         <View style={{ width: 24 }} />
       </View>
 
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <View style={styles.successIcon}>
-          <Check size={48} color="#FFFFFF" />
-        </View>
-        <Text style={styles.title}>Pagamento Concluído!</Text>
-        <Text style={styles.amount}>
-          {formatCurrency(paymentData.amount)}
-        </Text>
-        <View style={styles.receiptCard}>
-          <Text style={styles.receiptTitle}>Recibo de Pagamento</Text>
-          
-          <View style={styles.receiptItem}>
-            <Text style={styles.receiptLabel}>Descrição</Text>
-            <Text style={styles.receiptValue}>
-              {paymentData.chargeData?.description || 'N/A'}
-            </Text>
+      <ScrollView 
+        style={styles.scrollView} 
+        contentContainerStyle={styles.content} 
+        showsVerticalScrollIndicator={false}
+      >
+        <ViewShot 
+          ref={receiptRef} 
+          options={{ format: 'jpg', quality: 0.9 }}
+          style={styles.receiptContainer}
+        >
+          <View style={styles.successIconContainer}>
+            <View style={styles.successIcon}>
+              <Check size={48} color="#FFFFFF" />
+            </View>
           </View>
           
-          <View style={styles.receiptItem}>
-            <Text style={styles.receiptLabel}>Comerciante</Text>
-            <Text style={styles.receiptValue}>
-              {paymentData.chargeData?.merchant || 'N/A'}
-            </Text>
-          </View>
+          <Text style={styles.title}>Pagamento Concluído!</Text>
+          <Text style={styles.amount}>
+            {formatCurrency(paymentData.amount)}
+          </Text>
           
-          <View style={styles.receiptItem}>
-            <Text style={styles.receiptLabel}>Data e Hora</Text>
-            <Text style={styles.receiptValue}>
-              {formatDateTime()}
-            </Text>
-          </View>
-          
-          <View style={styles.receiptItem}>
-            <Text style={styles.receiptLabel}>Cartão</Text>
-            <Text style={styles.receiptValue}>
-              {displayCardNumber}
-            </Text>
-          </View>
-          
-          <View style={styles.receiptItem}>
-            <Text style={styles.receiptLabel}>Tipo</Text>
-            <Text style={styles.receiptValue}>
-              {paymentData.cardType || 'Desconhecido'}
-            </Text>
-          </View>
-          
-          <View style={styles.receiptItem}>
-            <Text style={styles.receiptLabel}>Validade</Text>
-            <Text style={styles.receiptValue}>
-              {displayExpiryDate}
-            </Text>
-          </View>
-          
-          {paymentData.paymentType === 'credit' && paymentData.installments > 1 && (
-            <View style={styles.receiptItem}>
-              <Text style={styles.receiptLabel}>Parcelamento</Text>
-              <Text style={styles.receiptValue}>
-                {paymentData.installments}x de {formatCurrency(paymentData.amount / paymentData.installments)}
+          {hasInterest && paymentData.originalAmount && (
+            <View style={styles.interestInfo}>
+              <AlertCircle size={14} color={theme.colors.textSecondary} />
+              <Text style={styles.interestText}>
+                Valor original: {formatCurrency(paymentData.originalAmount)}
               </Text>
             </View>
           )}
           
-          <View style={styles.receiptItem}>
-            <Text style={styles.receiptLabel}>Autorização</Text>
-            <Text style={styles.receiptValue}>
-              {Math.floor(Math.random() * 1000000).toString().padStart(6, '0')}
-            </Text>
+          <View style={styles.receiptCard}>
+            <Text style={styles.receiptTitle}>Recibo de Pagamento</Text>
+            
+            <View style={styles.receiptItem}>
+              <Text style={styles.receiptLabel}>Descrição</Text>
+              <Text style={styles.receiptValue}>
+                {paymentData.chargeData?.description || 'N/A'}
+              </Text>
+            </View>
+            
+            <View style={styles.receiptItem}>
+              <Text style={styles.receiptLabel}>Comerciante</Text>
+              <Text style={styles.receiptValue}>
+                {paymentData.chargeData?.merchantName || 'Sua Empresa'}
+              </Text>
+            </View>
+            
+            <View style={styles.receiptItem}>
+              <Text style={styles.receiptLabel}>Data e Hora</Text>
+              <Text style={styles.receiptValue}>
+                {formatDateTime()}
+              </Text>
+            </View>
+            
+            <View style={styles.receiptItem}>
+              <Text style={styles.receiptLabel}>Cartão</Text>
+              <Text style={styles.receiptValue}>
+                {displayCardNumber}
+              </Text>
+            </View>
+            
+            <View style={styles.receiptItem}>
+              <Text style={styles.receiptLabel}>Tipo</Text>
+              <Text style={styles.receiptValue}>
+                {paymentData.cardType || 'Desconhecido'}
+              </Text>
+            </View>
+            
+            <View style={styles.receiptItem}>
+              <Text style={styles.receiptLabel}>Validade</Text>
+              <Text style={styles.receiptValue}>
+                {displayExpiryDate}
+              </Text>
+            </View>
+            
+            {paymentData.paymentType === 'credit' && paymentData.installments > 1 && (
+              <View style={styles.receiptItem}>
+                <Text style={styles.receiptLabel}>Parcelamento</Text>
+                <Text style={styles.receiptValue}>
+                  {paymentData.installments + 'x de ' + formatCurrency(paymentData.amount / paymentData.installments)}
+                  {hasInterest && (
+                    <Text style={styles.interestNoteSmall}> (com juros)</Text>
+                  )}
+                </Text>
+              </View>
+            )}
+            
+            <View style={styles.receiptItem}>
+              <Text style={styles.receiptLabel}>Status</Text>
+              <Text style={[styles.receiptValue, styles.statusSuccess]}>
+                Aprovado
+              </Text>
+            </View>
           </View>
-        </View>
+        </ViewShot>
         
-        <Text style={styles.message}>
-          Pagamento processado com sucesso!
-        </Text>
-        
-        <View style={styles.buttonsContainer}>
-          <TouchableOpacity 
-            style={styles.shareButton}
-            onPress={() => router.push({
-              pathname: '/payment/receipt-share',
-              params: { paymentData: JSON.stringify(paymentData) }
-            })}
-          >
-            <Share2 size={20} color="#00CC66" />
-            <Text style={styles.shareButtonText}>Compartilhar Recibo</Text>
-          </TouchableOpacity>
-        </View>
+        {/* Espaço extra para garantir que o conteúdo não fique atrás do botão fixo */}
+        <View style={styles.spacer} />
       </ScrollView>
       
       <View style={styles.footer}>
-        <TouchableOpacity 
-          style={styles.homeButton}
-          onPress={handleFinish}
-        >
-          <Text style={styles.homeButtonText}>Concluir</Text>
-        </TouchableOpacity>
+        <Button
+          title="COMPARTILHAR COMPROVANTE"
+          onPress={shareScreenshot}
+          variant="primary"
+          size="lg"
+          icon={<Share2 size={20} color="#FFFFFF" />}
+          iconPosition="left"
+          fullWidth
+          style={styles.shareButton}
+          textStyle={styles.shareButtonText}
+        />
       </View>
     </SafeAreaView>
   );
@@ -302,24 +322,35 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 8,
+    paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#EEEEEE',
     backgroundColor: '#FFFFFF',
   },
   backButton: {
-    padding: 16,
+    padding: 8,
   },
   headerTitle: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: 'bold',
     color: '#333333',
+    textAlign: 'center',
+  },
+  scrollView: {
+    flex: 1,
   },
   content: {
-    flexGrow: 1,
     padding: 20,
     alignItems: 'center',
+    paddingBottom: 200, // Aumentar ainda mais o espaço para garantir que o conteúdo não fique escondido
+  },
+  receiptContainer: {
+    alignItems: 'center',
+    width: '100%',
+    backgroundColor: '#F8F9FA',
+  },
+  successIconContainer: {
+    paddingVertical: 20,
   },
   successIcon: {
     width: 80,
@@ -328,7 +359,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#00CC66',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: 16,
     shadowColor: '#00CC66',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
@@ -336,17 +367,31 @@ const styles = StyleSheet.create({
     elevation: 5,
   },
   title: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: 'bold',
     color: '#333333',
-    marginBottom: 16,
+    marginBottom: 12,
     textAlign: 'center',
   },
   amount: {
-    fontSize: 36,
+    fontSize: 32,
     fontWeight: 'bold',
     color: '#333333',
-    marginBottom: 24,
+    marginBottom: 8,
+  },
+  interestInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  interestText: {
+    fontSize: 14,
+    color: '#666666',
+    marginLeft: 8,
+  },
+  interestNoteSmall: {
+    fontSize: 12,
+    color: '#FF9500',
   },
   receiptCard: {
     backgroundColor: '#FFFFFF',
@@ -391,47 +436,42 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 32,
   },
-  buttonsContainer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    width: '100%',
-  },
-  shareButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#00CC66',
-    borderRadius: 8,
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    justifyContent: 'center',
-  },
-  shareButtonText: {
-    marginLeft: 8,
-    color: '#00CC66',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
   footer: {
-    padding: 20,
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    padding: 16,
     backgroundColor: '#FFFFFF',
     borderTopWidth: 1,
     borderTopColor: '#EEEEEE',
+    zIndex: 1000,
+    paddingBottom: Platform.OS === 'android' ? 80 : 90, // Aumentar ainda mais
+    elevation: 20, // Aumentar elevação
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
   },
-  homeButton: {
-    backgroundColor: '#00CC66',
-    borderRadius: 8,
-    paddingVertical: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexDirection: 'row',
+  shareButton: {
+    marginBottom: 0,
+    backgroundColor: '#006AFF', // Azul mais vibrante
+    borderColor: '#006AFF',
+    paddingVertical: 18, // Aumentar o padding vertical
+    borderRadius: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 10,
   },
-  homeButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
+  shareButtonText: {
+    fontSize: 18, // Aumentar o tamanho da fonte
     fontWeight: 'bold',
-    marginLeft: 8,
+    color: '#FFFFFF',
+  },
+  buttonContainer: {
+    width: '100%',
   },
   errorText: {
     fontSize: 18,
@@ -456,5 +496,11 @@ const styles = StyleSheet.create({
   },
   button: {
     marginTop: 24,
+  },
+  statusSuccess: {
+    color: '#00CC66',
+  },
+  spacer: {
+    height: 180, // Aumentar o espaço extra no final do ScrollView
   },
 }); 

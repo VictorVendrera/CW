@@ -14,7 +14,7 @@ import {
   AppStateStatus
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { ArrowLeft, Check, CreditCard, X, AlertCircle } from 'lucide-react-native';
+import { ArrowLeft, Check, CreditCard, X, AlertCircle, Info } from 'lucide-react-native';
 import theme from '../../config/theme';
 import Button from '../../components/Button';
 import Card from '../../components/Card';
@@ -24,15 +24,19 @@ import OptionSelector from '../../components/OptionSelector';
 import Checkbox from '../../components/Checkbox';
 import { useNFC } from '../../hooks/useNFC';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { calculateInstallmentAmount } from '../../services/firebase';
 
 type ChargeData = {
   id: string;
   amount: number;
   description: string;
   customer: string;
-  merchant: string;
+  merchantName: string;
   merchantId: string;
   date: string;
+  maxInstallments?: number;
+  installmentsWithoutFee?: number;
+  installmentFeeRate?: number;
 };
 
 const NFCPaymentScreen = () => {
@@ -46,6 +50,7 @@ const NFCPaymentScreen = () => {
   const [installments, setInstallments] = useState<number>(1);
   const [paymentType, setPaymentType] = useState<'credit' | 'debit'>('credit');
   const [chargeCardFee, setChargeCardFee] = useState<boolean>(false);
+  const [totalWithInterest, setTotalWithInterest] = useState<number>(0);
   
   // Utilizar o hook useNFC para gerenciar a leitura NFC
   const { 
@@ -103,57 +108,60 @@ const NFCPaymentScreen = () => {
     return () => backHandler.remove();
   }, [status]);
 
+  // Calcular o valor total com base no número de parcelas e juros aplicáveis
+  useEffect(() => {
+    if (!charge) return;
+
+    const amount = charge.amount;
+    const installmentsWithoutFee = charge.installmentsWithoutFee || 3;
+    const feeRate = charge.installmentFeeRate || 1.99;
+    
+    // Calcular valor com juros se necessário
+    const total = calculateInstallmentAmount(
+      amount, 
+      installments, 
+      installmentsWithoutFee, 
+      feeRate
+    );
+    
+    setTotalWithInterest(total);
+  }, [charge, installments]);
+
   // Efeito para navegar para a tela de sucesso quando o status for 'success'
   useEffect(() => {
     if (status === 'success' && cardData) {
       console.log('NFC: Navegando para tela de sucesso com dados:', cardData);
         
-        try {
-          // Preparar dados para navegação
-          const navigationData = {
-            cardNumber: cardData.cardNumber,
-            expiryDate: cardData.expiryDate,
-            cardType: cardData.cardType || 'Desconhecido',
-            chargeData: charge,
-            amount: calculateTotal(),
-            installments,
-            paymentType,
+      try {
+        // Preparar dados para navegação
+        const navigationData = {
+          cardNumber: cardData.cardNumber,
+          expiryDate: cardData.expiryDate,
+          cardType: cardData.cardType || 'Desconhecido',
+          chargeData: charge,
+          amount: calculateTotal(),
+          originalAmount: charge?.amount || 0,
+          installments,
+          paymentType,
+          installmentsWithoutFee: charge?.installmentsWithoutFee || 3,
+          installmentFeeRate: charge?.installmentFeeRate || 1.99,
           timestamp: Date.now()
-          };
-          
-          console.log('NFC: Dados preparados para navegação:', navigationData);
-          
-        // Forçar navegação imediata para a tela de sucesso com múltiplas tentativas
-        const navigateToSuccess = () => {
-          console.log('NFC: Tentando navegar para tela de sucesso...');
-          
-          try {
-            router.replace({
-              pathname: '/payment/success',
-              params: { 
-                paymentData: JSON.stringify(navigationData),
-                refreshKey: Date.now().toString()
-              }
-            });
-          } catch (navError) {
-            console.error('NFC: Erro ao navegar:', navError);
-          }
         };
         
-        // Primeira tentativa imediata
-        navigateToSuccess();
+        console.log('NFC: Dados preparados para navegação:', navigationData);
         
-        // Segunda tentativa após um pequeno atraso (caso a primeira falhe)
-        setTimeout(navigateToSuccess, 500);
-        
-        // Terceira tentativa após um atraso maior (caso as anteriores falhem)
-        setTimeout(navigateToSuccess, 1500);
-        
-        } catch (error) {
-          console.error('NFC: Erro ao navegar para tela de sucesso:', error);
-          setErrorMessage('Erro ao processar pagamento');
-        }
+        // Navegar diretamente para tela de sucesso (uma única vez)
+        router.replace({
+          pathname: '/payment/success',
+          params: { 
+            paymentData: JSON.stringify(navigationData)
+          }
+        });
+      } catch (error) {
+        console.error('NFC: Erro ao navegar para tela de sucesso:', error);
+        setErrorMessage('Erro ao processar pagamento');
       }
+    }
   }, [status, cardData, charge, installments, paymentType, router]);
 
   // Adicionar listener para mudanças no estado do app
@@ -217,19 +225,34 @@ const NFCPaymentScreen = () => {
     if (chargeCardFee) {
       // Simular taxa de 2.5% para crédito e 1.5% para débito
       const feeRate = paymentType === 'credit' ? 0.025 : 0.015;
-      return charge.amount * (1 + feeRate);
+      return (paymentType === 'credit' && installments > 1) ? 
+        totalWithInterest * (1 + feeRate) : 
+        charge.amount * (1 + feeRate);
     }
     
-    return charge.amount;
+    return (paymentType === 'credit' && installments > 1) ? 
+      totalWithInterest : 
+      charge.amount;
   };
 
-  // Opções de parcelamento - apenas se for crédito
-  const installmentOptions = Array.from({ length: 12 }, (_, i) => ({
-    id: i + 1,
-    label: `${i + 1}${i === 0 ? 'x' : 'x'}`,
-    value: i + 1,
-    disabled: paymentType === 'debit' && i > 0,
-  }));
+  // Verificar se há juros para o número de parcelas atual
+  const hasInterest = () => {
+    if (!charge || paymentType !== 'credit' || installments <= 1) return false;
+    return installments > (charge.installmentsWithoutFee || 3);
+  };
+
+  // Opções de parcelamento - apenas se for crédito e limitado pelo cobrador
+  const getInstallmentOptions = () => {
+    if (!charge) return [];
+    
+    const maxInstallments = charge.maxInstallments || 12;
+    return Array.from({ length: maxInstallments }, (_, i) => ({
+      id: i + 1,
+      label: (i + 1) + (i === 0 ? 'x' : 'x'),
+      value: i + 1,
+      disabled: paymentType === 'debit' && i > 0,
+    }));
+  };
 
   // Opções de tipo de pagamento
   const paymentTypeOptions = [
@@ -253,7 +276,7 @@ const NFCPaymentScreen = () => {
         return (
           <ScrollView style={styles.scrollContent}>
             <Card variant="elevated" style={styles.chargeCard}>
-              <Text style={styles.merchantName}>{charge.merchant}</Text>
+              <Text style={styles.merchantName}>{charge.merchantName}</Text>
               <Text style={styles.merchantId}>ID: {charge.merchantId}</Text>
               
               <View style={styles.amountContainer}>
@@ -263,6 +286,11 @@ const NFCPaymentScreen = () => {
                   size="xl"
                   color={theme.colors.text}
                 />
+                {hasInterest() && (
+                  <Text style={styles.interestNote}>
+                    Valor original: <MoneyText value={charge.amount} size="sm" />
+                  </Text>
+                )}
               </View>
               
               <View style={styles.divider} />
@@ -294,40 +322,38 @@ const NFCPaymentScreen = () => {
 
             {paymentType === 'credit' && (
               <Section title="Parcelas">
-                <OptionSelector
-                  options={installmentOptions.slice(0, 6)}
-                  selectedOption={installments}
-                  onSelect={(option) => setInstallments(option.value)}
-                  style={styles.installmentOptions}
-                />
+                <ScrollView 
+                  horizontal 
+                  showsHorizontalScrollIndicator={false}
+                  style={styles.installmentScrollView}
+                >
+                  <OptionSelector
+                    options={getInstallmentOptions()}
+                    selectedOption={installments}
+                    onSelect={(option) => setInstallments(option.value)}
+                    style={styles.installmentOptions}
+                    layout="horizontal"
+                  />
+                </ScrollView>
                 
                 {installments > 1 && (
                   <View style={styles.cardFeeContainer}>
                     <Text style={styles.installmentsText}>
                       {installments}x de <MoneyText value={calculateTotal() / installments} size="sm" />
                     </Text>
+                    
+                    {hasInterest() && (
+                      <View style={styles.interestAlert}>
+                        <Info size={16} color={theme.colors.warning} />
+                        <Text style={styles.interestAlertText}>
+                          Juros de {charge.installmentFeeRate}% a partir da {charge.installmentsWithoutFee}ª parcela
+                        </Text>
+                      </View>
+                    )}
                   </View>
                 )}
               </Section>
             )}
-
-            {/*
-            <Card variant="outlined" style={styles.cardFeeContainer}>
-              <Checkbox
-                checked={chargeCardFee}
-                onPress={() => setChargeCardFee(!chargeCardFee)}
-                label="Repassar taxas para o cliente"
-                style={styles.checkbox}
-              />
-              {chargeCardFee && (
-                <View style={styles.feeInfo}>
-                  <Text style={styles.feeInfoText}>
-                    Taxa de {paymentType === 'credit' ? '2,5%' : '1,5%'} será adicionada ao valor
-                  </Text>
-                </View>
-              )}
-            </Card>
-            */}
 
             <View style={styles.securityNotice}>
               <Check size={20} color={theme.colors.success} />
@@ -361,6 +387,7 @@ const NFCPaymentScreen = () => {
             {paymentType === 'credit' && installments > 1 && (
               <Text style={styles.installmentsText}>
                 {installments}x de <MoneyText value={calculateTotal() / installments} size="sm" />
+                {hasInterest() && <Text> (com juros)</Text>}
               </Text>
             )}
           </View>
@@ -399,7 +426,7 @@ const NFCPaymentScreen = () => {
                 <View style={styles.paymentDetailRow}>
                   <Text style={styles.paymentDetailLabel}>Cartão</Text>
                   <Text style={styles.paymentDetailValue}>
-                    {cardData?.cardNumber ? `**** **** **** ${cardData.cardNumber.slice(-4)}` : '****'}
+                    {cardData?.cardNumber ? '**** **** **** ' + cardData.cardNumber.slice(-4) : '****'}
                   </Text>
                 </View>
                 
@@ -415,9 +442,7 @@ const NFCPaymentScreen = () => {
               </Card>
             </View>
             
-            <Text style={styles.successSubtext}>
-              O comprovante será enviado para o email do cliente
-            </Text>
+            <ActivityIndicator size="large" color={theme.colors.primary} />
           </View>
         );
       
@@ -477,22 +502,10 @@ const NFCPaymentScreen = () => {
       case 'success':
         return (
           <Button
-            title="Continuar"
+            title="CONTINUAR"
             onPress={() => {
-              const successData = {
-                cardNumber: cardData?.cardNumber || '',
-                expiryDate: cardData?.expiryDate || '',
-                cardType: cardData?.cardType || 'Desconhecido',
-                chargeData: charge,
-                amount: calculateTotal(),
-                installments: installments,
-                paymentType: paymentType
-              };
-              
-              router.push({
-                pathname: '/payment/success',
-                params: { paymentData: JSON.stringify(successData) }
-              });
+              // Navegar diretamente para a tela inicial em vez de duplicar a navegação para success
+              router.replace('/');
             }}
             variant="primary"
             size="lg"
@@ -525,13 +538,13 @@ const NFCPaymentScreen = () => {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity
+      <TouchableOpacity
           onPress={cancelTransaction} 
           style={styles.backButton}
           disabled={status === 'reading' || status === 'detected'}
         >
           <ArrowLeft size={24} color={theme.colors.text} />
-        </TouchableOpacity>
+      </TouchableOpacity>
         <Text style={[styles.headerTitle, { marginTop: 20 }]}>
           {status === 'waiting' || status === 'idle' || status === 'cancelled'
             ? 'Pagamento com Cartão' 
@@ -542,7 +555,7 @@ const NFCPaymentScreen = () => {
             : 'Processando Pagamento'}
         </Text>
         <View style={{ width: 24 }} />
-      </View>
+        </View>
 
       {renderContent()}
       
@@ -630,13 +643,18 @@ const styles = StyleSheet.create({
     color: theme.colors.text,
   },
   paymentOptions: {
-    marginBottom: 24,
+    marginBottom: 16,
+  },
+  installmentScrollView: {
+    maxHeight: 44,
+    marginBottom: 8,
   },
   installmentOptions: {
-    marginBottom: 24,
+    flexDirection: 'row',
   },
   cardFeeContainer: {
-    marginBottom: 24,
+    marginBottom: 16,
+    paddingTop: 4,
   },
   feeCard: {
     marginBottom: theme.spacing.md,
@@ -874,6 +892,25 @@ const styles = StyleSheet.create({
     color: theme.colors.textSecondary,
     textAlign: 'center',
     marginBottom: 32,
+  },
+  interestNote: {
+    fontSize: theme.typography.fontSize.sm,
+    color: theme.colors.textSecondary,
+    marginTop: 8,
+  },
+  interestAlert: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: theme.colors.secondaryLight,
+    borderRadius: theme.borderRadius.sm,
+    padding: theme.spacing.sm,
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  interestAlertText: {
+    fontSize: theme.typography.fontSize.xs,
+    color: theme.colors.warning,
+    marginLeft: theme.spacing.sm,
   },
 });
 

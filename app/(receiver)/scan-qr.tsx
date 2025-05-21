@@ -5,25 +5,21 @@ import {
   StyleSheet, 
   TouchableOpacity, 
   ActivityIndicator, 
-  TextInput, 
-  Modal,
   Alert,
   SafeAreaView
 } from 'react-native';
-import { useRouter } from 'expo-router';
-import { ArrowLeft, QrCode, Camera, X, ShieldCheck } from 'lucide-react-native';
+import { useRouter, Stack } from 'expo-router';
+import { ArrowLeft, QrCode, Camera, ShieldCheck } from 'lucide-react-native';
 import theme from '../../config/theme';
 import Button from '../../components/Button';
-import Card from '../../components/Card';
-import TextField from '../../components/TextField';
 import Section from '../../components/Section';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function ScanQRScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [scanning, setScanning] = useState(false);
   const [cameraPermission, setCameraPermission] = useState<boolean | null>(null);
-  const [modalVisible, setModalVisible] = useState(false);
-  const [paymentLink, setPaymentLink] = useState('');
 
   useEffect(() => {
     // Simular solicitação de permissão da câmera
@@ -71,49 +67,6 @@ export default function ScanQRScreen() {
     }
   };
 
-  const handleManualLinkSubmit = () => {
-    if (!paymentLink) {
-      Alert.alert('Erro', 'Por favor, insira um link de pagamento válido');
-      return;
-    }
-
-    // Extrair ID do link
-    let paymentId;
-    
-    try {
-      // Tentar extrair do formato https://nfcpayflow.app/pay/ID ou nfcpayflow://pay/ID
-      if (paymentLink.includes('/pay/')) {
-        paymentId = paymentLink.split('/pay/')[1];
-      } else {
-        // Se não conseguir extrair, usar o próprio link como ID
-        paymentId = paymentLink;
-      }
-
-      // Fechar o modal
-      setModalVisible(false);
-      setPaymentLink('');
-
-      // Simular dados de cobrança
-      const chargeData = {
-        id: paymentId,
-        amount: 50.00,
-        description: 'Pagamento via link manual',
-        customer: 'Cliente',
-        merchant: 'Loja do João',
-        merchantId: 'M123456',
-        date: new Date().toLocaleDateString('pt-BR'),
-      };
-
-      // Navegar para a tela de confirmação de pagamento
-      router.push({
-        pathname: '/(receiver)/payment-details',
-        params: { chargeData: JSON.stringify(chargeData) }
-      });
-    } catch (error) {
-      Alert.alert('Erro', 'Não foi possível processar o link de pagamento');
-    }
-  };
-
   // Simular o escaneamento após um tempo
   useEffect(() => {
     if (scanning) {
@@ -126,6 +79,9 @@ export default function ScanQRScreen() {
   }, [scanning]);
 
   return (
+    <>
+      <Stack.Screen options={{ headerShown: false }} />
+      
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
@@ -186,7 +142,7 @@ export default function ScanQRScreen() {
         </Text>
       </View>
 
-      <View style={styles.footer}>
+        <View style={[styles.footer, { paddingBottom: 24 + Math.max(insets.bottom, 16) }]}>
         <Button
           title={scanning ? "Parar escaneamento" : "Iniciar escaneamento"}
           onPress={toggleScanner}
@@ -196,63 +152,9 @@ export default function ScanQRScreen() {
           fullWidth
           style={styles.scanButton}
         />
-        
-        <Button
-          title="Inserir link de pagamento manualmente"
-          onPress={() => setModalVisible(true)}
-          variant="outline"
-          size="md"
-          fullWidth
-          style={styles.manualLinkButton}
-        />
-      </View>
-
-      {/* Modal para inserção manual de link */}
-      <Modal
-        animationType="slide"
-        transparent={true}
-        visible={modalVisible}
-        onRequestClose={() => setModalVisible(false)}
-      >
-        <View style={styles.modalContainer}>
-          <Card variant="elevated" style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Inserir Link de Pagamento</Text>
-              <TouchableOpacity 
-                style={styles.modalCloseButton}
-                onPress={() => setModalVisible(false)}
-              >
-                <X size={24} color={theme.colors.text} />
-              </TouchableOpacity>
-            </View>
-
-            <Text style={styles.modalInput}>
-              Cole ou digite o link de pagamento recebido
-            </Text>
-
-            <TextField
-              value={paymentLink}
-              onChangeText={setPaymentLink}
-              placeholder="https://nfcpayflow.app/pay/123456"
-              autoCapitalize="none"
-              autoCorrect={false}
-              style={styles.modalInput}
-            />
-
-            <View style={styles.modalButtons}>
-              <Button
-                title="Processar pagamento"
-                onPress={handleManualLinkSubmit}
-                variant="primary"
-                size="lg"
-                fullWidth
-                style={styles.modalButton}
-              />
-            </View>
-          </Card>
         </View>
-      </Modal>
     </SafeAreaView>
+    </>
   );
 }
 
@@ -277,6 +179,7 @@ const styles = StyleSheet.create({
     fontFamily: theme.typography.fontFamily.bold,
     fontSize: theme.typography.fontSize.lg,
     color: theme.colors.text,
+    marginTop: 4,
   },
   scannerContainer: {
     flex: 1,
@@ -367,44 +270,6 @@ const styles = StyleSheet.create({
     borderTopColor: theme.colors.divider,
   },
   scanButton: {
-    marginBottom: 12,
-  },
-  manualLinkButton: {
-    marginBottom: 12,
-  },
-  modalContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    padding: 24,
-  },
-  modalContent: {
-    backgroundColor: theme.colors.background,
-    borderRadius: 8,
-    padding: 24,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  modalTitle: {
-    fontFamily: theme.typography.fontFamily.bold,
-    fontSize: theme.typography.fontSize.lg,
-    color: theme.colors.text,
-  },
-  modalCloseButton: {
-    padding: 8,
-  },
-  modalInput: {
-    marginBottom: 24,
-  },
-  modalButtons: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  modalButton: {
-    flex: 1,
-    marginHorizontal: 8,
-  },
+    marginBottom: 0,
+  }
 }); 

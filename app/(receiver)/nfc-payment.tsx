@@ -2,47 +2,45 @@ import React, { useEffect, useState } from 'react';
 import { StyleSheet, View, Text, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { FontAwesome } from '@expo/vector-icons';
-import useNFC, { NFCStatusType, PaymentDetailsType } from '../../hooks/useNFC';
+import { useNFC, MerchantData, TransactionData, NFCStatus } from '../../hooks/useNFC';
 
 export default function NFCPaymentScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const [countdown, setCountdown] = useState<number>(60);
   const [isReady, setIsReady] = useState<boolean>(false);
+  const [paymentToken, setPaymentToken] = useState<string | null>(null);
   
   // Extrair parâmetros de pagamento da URL
-  const paymentId = params.id as string;
+  const paymentId = params.id as string || `payment-${Date.now()}`;
   const amount = parseFloat(params.amount as string) || 0;
   const description = params.description as string || 'Pagamento';
+  
+  // Dados do pagador e cobrador
   const payerName = params.payerName as string || 'Cliente';
   const payerDocument = params.payerDocument as string || '';
   const merchantName = params.merchantName as string || 'Lojista';
   const merchantDocument = params.merchantDocument as string || '';
+  const merchantId = params.merchantId as string || 'merch-default';
+  const merchantKey = params.merchantKey as string || 'key-default';
   
-  // Usar nosso hook NFC
+  // Usar nosso hook NFC aprimorado
   const { 
-    isAvailable, 
+    isSupported, 
     status, 
     error, 
-    transactionResult, 
-    startNfcPayment, 
-    cancelNfcPayment 
+    cardData,
+    transactionResult,
+    createPaymentToken,
+    startCardReading,
+    stopCardReading,
+    processPaymentWithToken,
+    resetNfcState
   } = useNFC();
-  
-  // Preparar o objeto de pagamento
-  const paymentDetails: PaymentDetailsType = {
-    id: paymentId,
-    amount,
-    description,
-    payerName,
-    payerDocument,
-    merchantName,
-    merchantDocument
-  };
   
   // Iniciar o temporizador
   useEffect(() => {
-    if (status === 'idle' && isAvailable) {
+    if (status === 'idle' && isSupported) {
       const timer = setInterval(() => {
         setCountdown(prev => {
           if (prev <= 1) {
@@ -56,12 +54,12 @@ export default function NFCPaymentScreen() {
       
       return () => clearInterval(timer);
     }
-  }, [status, isAvailable]);
+  }, [status, isSupported]);
   
-  // Verificar disponibilidade do NFC e iniciar pagamento
+  // Verificar disponibilidade do NFC e iniciar o processo de pagamento
   useEffect(() => {
     const preparePayment = async () => {
-      if (!isAvailable) {
+      if (!isSupported) {
         Alert.alert(
           'NFC Indisponível',
           'Este dispositivo não possui NFC ou o NFC está desativado. Por favor, ative o NFC nas configurações.',
@@ -70,12 +68,48 @@ export default function NFCPaymentScreen() {
         return;
       }
       
-      setIsReady(true);
-      
       try {
-        await startNfcPayment(paymentDetails);
-      } catch (err) {
-        Alert.alert('Erro', 'Erro ao iniciar pagamento NFC');
+        // Preparar dados do cobrador
+        const merchantData: MerchantData = {
+          id: merchantId,
+          name: merchantName,
+          document: merchantDocument,
+          accountId: `acc-${merchantId}`,
+          merchantKey: merchantKey
+        };
+        
+        // Preparar dados da transação
+        const transactionData: Omit<TransactionData, 'currency'> & { currency?: string } = {
+          id: paymentId,
+          amount,
+          description,
+          // Dados adicionais opcionais
+          referenceId: `ref-${Date.now()}`,
+          metadata: {
+            payerName,
+            payerDocument,
+            createdAt: new Date().toISOString()
+          }
+        };
+        
+        console.log('Gerando token para pagamento...');
+        
+        // Gerar token com os dados do cobrador
+        const token = await createPaymentToken(merchantData, transactionData);
+        
+        if (token) {
+          console.log('Token gerado com sucesso');
+          setPaymentToken(token);
+          setIsReady(true);
+          
+          // Iniciar a leitura NFC com o token
+          await processPaymentWithToken(token);
+        } else {
+          throw new Error('Falha ao gerar token de pagamento');
+        }
+      } catch (err: any) {
+        console.error('Erro ao preparar pagamento:', err);
+        Alert.alert('Erro', err.message || 'Erro ao iniciar pagamento NFC');
         router.back();
       }
     };
@@ -84,20 +118,23 @@ export default function NFCPaymentScreen() {
     
     return () => {
       // Limpar ao desmontar
-      cancelNfcPayment();
+      stopCardReading();
     };
-  }, [isAvailable]);
+  }, [isSupported, createPaymentToken, processPaymentWithToken]);
   
   // Monitorar mudanças de status
   useEffect(() => {
     if (status === 'success' && transactionResult) {
+      // Redirecionar para a tela de detalhes do pagamento
       router.push({
         pathname: '/(receiver)/payment-details',
         params: {
           id: transactionResult.transactionId,
           amount: amount.toString(),
           description,
-          authCode: transactionResult.authCode
+          authCode: transactionResult.authCode,
+          status: transactionResult.status,
+          timestamp: transactionResult.timestamp.toString()
         }
       });
     } else if (status === 'error') {
@@ -111,19 +148,30 @@ export default function NFCPaymentScreen() {
   
   // Função para cancelar o pagamento
   const handleCancel = async () => {
-    await cancelNfcPayment();
+    await stopCardReading();
     router.back();
   };
+  
+  // Verifica se o cartão está em processamento
+  const isCardProcessing = status === 'detected' || status === 'reading';
   
   // Renderizar mensagem de acordo com o status
   const renderStatusMessage = () => {
     switch(status) {
       case 'idle':
+        return 'Preparando pagamento...';
+      case 'waiting':
         return 'Aproxime o cartão do dispositivo';
-      case 'processing':
-        return 'Processando pagamento, mantenha o cartão próximo...';
+      case 'reading':
+        return 'Aproxime o cartão do dispositivo';
+      case 'detected':
+        return 'Cartão detectado, processando...';
       case 'cancelled':
         return 'Pagamento cancelado';
+      case 'success':
+        return 'Pagamento aprovado! Redirecionando...';
+      case 'error':
+        return `Erro: ${error || 'Falha no pagamento'}`;
       default:
         return 'Aguardando cartão...';
     }
@@ -142,14 +190,23 @@ export default function NFCPaymentScreen() {
         <Text style={styles.amountLabel}>Valor a pagar</Text>
         <Text style={styles.amountValue}>R$ {amount.toFixed(2)}</Text>
         <Text style={styles.description}>{description}</Text>
+        
+        <View style={styles.merchantInfo}>
+          <Text style={styles.merchantLabel}>Pagamento para</Text>
+          <Text style={styles.merchantName}>{merchantName}</Text>
+          {merchantDocument && <Text style={styles.merchantDocument}>{merchantDocument}</Text>}
+        </View>
       </View>
       
       <View style={styles.nfcContainer}>
         {isReady ? (
           <>
-            <View style={[styles.nfcIndicator, status === 'processing' && styles.nfcActive]}>
+            <View style={[
+              styles.nfcIndicator, 
+              isCardProcessing && styles.nfcActive
+            ]}>
               <FontAwesome name="wifi" size={80} color="#555" />
-              {status === 'processing' && (
+              {isCardProcessing && (
                 <ActivityIndicator 
                   size="large" 
                   color="#007AFF" 
@@ -161,13 +218,24 @@ export default function NFCPaymentScreen() {
             <Text style={styles.countdown}>Expira em: {countdown} segundos</Text>
           </>
         ) : (
-          <ActivityIndicator size="large" color="#007AFF" />
+          <>
+            <ActivityIndicator size="large" color="#007AFF" />
+            <Text style={styles.statusMessage}>Preparando pagamento...</Text>
+          </>
         )}
       </View>
       
       <TouchableOpacity style={styles.cancelButton} onPress={handleCancel}>
         <Text style={styles.cancelButtonText}>Cancelar</Text>
       </TouchableOpacity>
+      
+      {/* Informações adicionais */}
+      <View style={styles.infoContainer}>
+        <Text style={styles.infoText}>
+          Este dispositivo funcionará como um terminal de pagamento temporário.
+          O valor será transferido para a conta do comerciante.
+        </Text>
+      </View>
     </View>
   );
 }
@@ -221,6 +289,29 @@ const styles = StyleSheet.create({
   description: {
     fontSize: 16,
     color: '#444',
+    marginBottom: 16,
+  },
+  merchantInfo: {
+    borderTopWidth: 1,
+    borderTopColor: '#eee',
+    paddingTop: 16,
+    width: '100%',
+    alignItems: 'center',
+  },
+  merchantLabel: {
+    fontSize: 14,
+    color: '#666',
+  },
+  merchantName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#222',
+    marginTop: 4,
+  },
+  merchantDocument: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 2,
   },
   nfcContainer: {
     flex: 1,
@@ -248,23 +339,31 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     textAlign: 'center',
     marginBottom: 8,
+    paddingHorizontal: 20,
   },
   countdown: {
-    fontSize: 16,
+    fontSize: 14,
     color: '#666',
   },
   cancelButton: {
-    backgroundColor: '#fff',
-    padding: 16,
     margin: 16,
+    padding: 16,
+    backgroundColor: '#f44336',
     borderRadius: 8,
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#ddd',
   },
   cancelButtonText: {
     fontSize: 16,
-    color: '#e74c3c',
     fontWeight: '600',
+    color: '#fff',
+  },
+  infoContainer: {
+    padding: 16,
+    marginBottom: 16,
+  },
+  infoText: {
+    fontSize: 12,
+    color: '#666',
+    textAlign: 'center',
   },
 }); 

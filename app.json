@@ -1,15 +1,17 @@
 {
   "expo": {
-    "name": "novo-projeto",
-    "slug": "novo-projeto",
+    "name": "NFC PayFlow",
+    "slug": "nfc-payflow",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "novoprojeto",
+    "scheme": "nfcpayflow",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.nfcpayflow.app",
+      "associatedDomains": ["applinks:nfcpayflow.app"]
     },
     "android": {
       "adaptiveIcon": {
@@ -17,7 +19,30 @@
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.anonymous.novoprojeto"
+      "package": "com.nfcpayflow.app",
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "data": [
+            {
+              "scheme": "https",
+              "host": "nfcpayflow.app",
+              "pathPrefix": "/pay"
+            },
+            {
+              "scheme": "http",
+              "host": "nfcpayflow.app",
+              "pathPrefix": "/pay"
+            },
+            {
+              "scheme": "nfcpayflow",
+              "host": "pay"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ],
+      "googleServicesFile": "./google-services.json"
     },
     "web": {
       "bundler": "metro",
